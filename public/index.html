@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UC Oracle - Your Intelligent Assistant</title>
+    <link rel="stylesheet" href="styles.css?v=2">
+</head>
+<body>
+    <div class="background-gradient"></div>
+    <div class="container">
+        <header class="header glass-effect">
+            <div class="header-content">
+                <div class="logo-section">
+                    <div id="logo3d" class="uc-logo"></div>
+                    <div class="title-section">
+                        <h1>UC Oracle</h1>
+                    </div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme">
+                    <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                    <svg class="moon-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
+                <div class="status-indicator" id="status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Connecting...</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <!-- Chat Container -->
+            <div class="chat-container glass-effect">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="welcome-message">
+                        <div class="welcome-icon">
+                            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <h2>Welcome to Oracle</h2>
+                        <p>Your intelligent course assistant powered by advanced AI and semantic search.</p>
+                        <p>Ask me about courses, modules, assessments, or any academic information.</p>
+                    </div>
+                </div>
+
+                <div class="input-container">
+                    <textarea 
+                        id="messageInput" 
+                        placeholder="Ask me anything..." 
+                        rows="1"
+                        maxlength="500"
+                    ></textarea>
+                    <button id="sendButton" class="send-button">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                            <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sidebar -->
+            <div class="sidebar glass-effect">
+                <div class="sidebar-section">
+                    <h3>📤 Upload Documents</h3>
+                    <p class="sidebar-text">Expand the knowledge base</p>
+                    <textarea 
+                        id="documentInput" 
+                        placeholder="Paste your document text here..."
+                        rows="6"
+                    ></textarea>
+                    <button id="uploadButton" class="upload-button">Upload Document</button>
+                    <div id="uploadStatus" class="upload-status"></div>
+                </div>
+
+                <div class="sidebar-section">
+                    <h3>💡 Tips</h3>
+                    <ul class="tips-list">
+                        <li>I remember our conversation - ask follow-up questions!</li>
+                        <li>Hover over underlined terms for definitions</li>
+                        <li>Ask specific questions for better results</li>
+                        <li>I use context from my vector database</li>
+                        <li>Upload documents to expand my knowledge</li>
+                    </ul>
+                </div>
+
+                <div class="sidebar-section stats">
+                    <h3>📊 Session Stats</h3>
+                    <div class="stat-item">
+                        <span class="stat-label">Messages:</span>
+                        <span class="stat-value" id="messageCount">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Avg. Response:</span>
+                        <span class="stat-value" id="avgResponse">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Context Size:</span>
+                        <span class="stat-value" id="contextSize">0</span>
+                    </div>
+                    <button id="clearChatButton" class="clear-chat-button">🔄 Clear Chat</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Anime.js for animations -->
+    <script src="https://cdn.jsdelivr.net/npm/animejs@3.2.1/lib/anime.min.js"></script>
+    
+    <!-- Marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    
+    <!-- Three.js for 3D rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    
+    <script src="app.js"></script>
+    <script src="logo3d.js"></script>
+</body>
+</html>
