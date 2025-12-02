@@ -3,6 +3,11 @@ main = "src/worker.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Smart Placement - routes to datacenter closest to your backend APIs
+# This significantly reduces latency for OpenAI/Pinecone/Gemini calls
+[placement]
+mode = "smart"
+
 # Account ID (optional - wrangler will prompt if needed)
 # account_id = "your-account-id"
 

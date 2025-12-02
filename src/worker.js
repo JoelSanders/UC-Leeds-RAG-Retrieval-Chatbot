@@ -203,8 +203,12 @@ export default {
           queryCache.delete(cacheKey);
         }
 
-        const embedding = await generateEmbedding(message, env);
-        const matches = await queryPinecone(embedding, { topK: 15, namespace, minScore: 0.3 }, env);
+        // Parallel: Generate embedding while preparing cache key
+        const embeddingPromise = generateEmbedding(message, env);
+        
+        const embedding = await embeddingPromise;
+        // Reduced topK for faster queries (was 15)
+        const matches = await queryPinecone(embedding, { topK: 8, namespace, minScore: 0.35 }, env);
 
         const context = matches.length > 0
           ? `<CONTEXT>\n${matches.map((m, i) => 
