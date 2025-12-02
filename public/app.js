@@ -7,7 +7,12 @@
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-const API_BASE_URL = 'http://localhost:3000/api';
+// Auto-detect API URL based on environment
+// - In development (localhost): use localhost:3000
+// - In production (Cloudflare): use same origin
+const API_BASE_URL = window.location.hostname === 'localhost' 
+    ? 'http://localhost:3000/api'
+    : `${window.location.origin}/api`;
 
 // Academic Terminology Glossary
 const ACADEMIC_GLOSSARY = {
