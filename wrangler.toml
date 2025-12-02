@@ -3,25 +3,26 @@ main = "src/worker.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Environment variables (set these in Cloudflare dashboard or use wrangler secret)
-# OPENAI_API_KEY = ""
-# PINECONE_API_KEY = ""
-# PINECONE_INDEX_NAME = ""
-# GEMINI_API_KEY = ""
+# Account ID (optional - wrangler will prompt if needed)
+# account_id = "your-account-id"
 
 [vars]
 ENVIRONMENT = "production"
 
-# Static assets from public folder
+# Static assets configuration
 [site]
 bucket = "./public"
 
-# Build configuration
+# Build settings (no build step needed)
 [build]
-command = "npm install"
+command = ""
 
-# Dev server configuration
+# Development settings
 [dev]
 port = 8787
 local_protocol = "http"
 
+# Preview environment
+[env.preview]
+name = "uc-oracle-chatbot-preview"
+vars = { ENVIRONMENT = "preview" }
