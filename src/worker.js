@@ -114,7 +114,7 @@ ${context}`;
   });
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${env.GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,6 +135,197 @@ ${context}`;
 
   const data = await response.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || 'I apologize, but I could not generate a response.';
+}
+
+// ============ Intelligent Suggestions ============
+
+// Extract context from conversation history
+function extractConversationContext(conversationHistory = [], currentQuery = '') {
+  const context = {
+    course: null,
+    module: null,
+    year: null,
+    hasSpecificCourse: false,
+    hasSpecificModule: false,
+    hasSpecificYear: false,
+  };
+
+  const allContent = [
+    ...conversationHistory.slice(-6).map(msg => msg.content || ''),
+    currentQuery
+  ];
+
+  for (const content of allContent) {
+    const contentLower = content.toLowerCase();
+
+    // Detect course type
+    if (contentLower.includes('fd ') || contentLower.includes('foundation')) {
+      context.course = 'FD';
+      context.hasSpecificCourse = true;
+    } else if (contentLower.includes('bsc') || contentLower.includes('bachelor')) {
+      context.course = 'BSc';
+      context.hasSpecificCourse = true;
+    }
+
+    // Detect year
+    const yearMatch = contentLower.match(/year\s*(\d)/i);
+    if (yearMatch) {
+      context.year = yearMatch[1];
+      context.hasSpecificYear = true;
+    }
+
+    // Detect module mentions
+    const modulePatterns = /(?:psychology|anatomy|training|fitness|nutrition|sport|professional|research|academic|health|wellbeing|leadership)/i;
+    if (modulePatterns.test(contentLower)) {
+      const match = contentLower.match(modulePatterns);
+      if (match) {
+        context.module = match[0];
+        context.hasSpecificModule = true;
+      }
+    }
+  }
+
+  return context;
+}
+
+// Analyze matches for ambiguity
+function analyzeMatchesForSuggestions(matches, query) {
+  const typeGroups = {};
+
+  matches.forEach((match, idx) => {
+    const type = match.metadata?.type || 'unknown';
+    if (!typeGroups[type]) typeGroups[type] = [];
+    typeGroups[type].push({
+      index: idx + 1,
+      score: match.score,
+      metadata: match.metadata,
+      match: match
+    });
+  });
+
+  const suggestions = [];
+
+  Object.entries(typeGroups).forEach(([type, items]) => {
+    if (items.length >= 2) {
+      const topScore = items[0].score;
+      const threshold = type === 'assessment' ? 0.20 : 0.15;
+      const similarItems = items.filter(item => (topScore - item.score) < threshold);
+
+      if (similarItems.length >= 2) {
+        suggestions.push({
+          type,
+          count: similarItems.length,
+          items: similarItems.slice(0, 3),
+          avgScore: similarItems.reduce((sum, item) => sum + item.score, 0) / similarItems.length
+        });
+      }
+    }
+  });
+
+  return {
+    hasSuggestions: suggestions.length > 0,
+    suggestions
+  };
+}
+
+// Build suggestion tile from match
+function buildSuggestion(item, queryContext) {
+  const metadata = item.metadata || {};
+  const type = metadata.type || 'unknown';
+
+  let title = '';
+  let icon = '📄';
+
+  switch (type) {
+    case 'module':
+      title = metadata.module_title || 'Unknown Module';
+      icon = '📚';
+      break;
+    case 'assessment':
+      title = metadata.module_title || '';
+      if (metadata.assessment_type) {
+        title += title ? ` (${metadata.assessment_type})` : metadata.assessment_type;
+      }
+      icon = '📝';
+      break;
+    case 'course_overview':
+      title = metadata.course_title || 'Unknown Course';
+      icon = '🎓';
+      break;
+    default:
+      title = metadata.module_title || metadata.course_title || 'Information';
+  }
+
+  const details = [];
+
+  if (type === 'module' && metadata.year) {
+    details.push({ icon: '📅', label: `Year ${metadata.year}` });
+  }
+
+  if (type === 'assessment' && metadata.deadline) {
+    details.push({ icon: '⏰', label: metadata.deadline });
+  }
+
+  if (type === 'assessment' && metadata.weight) {
+    details.push({ icon: '⚖️', label: metadata.weight });
+  }
+
+  // Build click query
+  let query = '';
+  switch (type) {
+    case 'module':
+      query = `What are the assessments and deadlines for ${metadata.module_title || title}?`;
+      break;
+    case 'assessment':
+      query = `Tell me about the ${metadata.assessment_type || 'assessment'} in ${metadata.module_title || 'this module'}`;
+      break;
+    case 'course_overview':
+      query = `What modules are in ${metadata.course_title || title}?`;
+      break;
+    default:
+      query = `Tell me more about ${title}`;
+  }
+
+  return {
+    id: item.match?.id || `suggestion-${Date.now()}`,
+    title,
+    details,
+    query,
+    score: item.score,
+    type,
+    icon
+  };
+}
+
+// Extract suggestions from matches
+function extractSuggestions(matches, matchAnalysis, query, conversationHistory = []) {
+  const context = extractConversationContext(conversationHistory, query);
+
+  // Only show suggestions if user has provided some context
+  const hasEnoughContext = context.hasSpecificCourse || context.hasSpecificModule || context.hasSpecificYear;
+
+  if (!hasEnoughContext || !matchAnalysis.hasSuggestions) {
+    return [];
+  }
+
+  const seen = new Set();
+  const suggestions = [];
+
+  matchAnalysis.suggestions.forEach(group => {
+    group.items.forEach(item => {
+      const key = `${item.metadata?.type}-${item.metadata?.module_title || item.metadata?.course_title}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      const suggestion = buildSuggestion(item, context);
+      if (suggestion) {
+        suggestion.priority = item.score;
+        suggestions.push(suggestion);
+      }
+    });
+  });
+
+  return suggestions.sort((a, b) => b.priority - a.priority).slice(0, 3);
 }
 
 // CORS headers
@@ -231,10 +422,14 @@ export default {
           },
         }));
 
+        // Generate intelligent suggestions
+        const matchAnalysis = analyzeMatchesForSuggestions(matches, message);
+        const suggestions = extractSuggestions(matches, matchAnalysis, message, conversationHistory);
+
         const result = {
           response: aiResponse,
           sources,
-          suggestions: [],
+          suggestions,
           responseTime: Date.now() - startTime,
           cached: false,
         };
