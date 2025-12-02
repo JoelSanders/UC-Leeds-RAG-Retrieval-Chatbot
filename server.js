@@ -193,6 +193,626 @@ function cacheQuery(queryKey, data) {
   });
 }
 
+// Helper function: Normalize module codes (remove brackets and extra characters)
+function normalizeModuleCode(code) {
+  if (!code) return code;
+  // Remove brackets and trim whitespace
+  return code.replace(/[\[\]]/g, '').trim();
+}
+
+// Helper function: Fetch hierarchically related items from Pinecone
+// Hierarchy: Course (course_code) -> Module (linked by course_code) -> Assessment (linked by module_code)
+async function fetchHierarchicalRelatedItems(matches, query, namespace = '') {
+  const relatedItems = [];
+  const fetchedIds = new Set(matches.map(m => m.id));
+  const queryLower = query.toLowerCase();
+  
+  // Detect what the user is asking about - be more inclusive
+  const wantsAssessments = /assessment|deadline|due|submit|exam|coursework|essay|presentation|weight|assignment|task|brief/i.test(query);
+  const wantsModules = /module|unit|subject|what modules|list modules|course content/i.test(query);
+  const mentionsModule = matches.some(m => m.metadata?.type === 'module');
+  
+  // ALWAYS fetch assessments if we found a module (even if not explicitly asked)
+  const shouldFetchAssessments = wantsAssessments || mentionsModule;
+  
+  console.log(`🔗 Checking hierarchy - wantsAssessments: ${wantsAssessments}, wantsModules: ${wantsModules}, mentionsModule: ${mentionsModule}`);
+  
+  // Extract course_codes and module_codes from current matches
+  const courseCodes = new Set();
+  const moduleCodes = new Set();
+  const normalizedModuleCodes = new Set(); // Track both original and normalized
+  
+  matches.forEach(match => {
+    const metadata = match.metadata || {};
+    
+    // Collect course codes
+    if (metadata.course_code) {
+      courseCodes.add(metadata.course_code);
+    }
+    
+    // Collect module codes - normalize to handle bracket variations
+    if (metadata.module_code) {
+      const original = metadata.module_code;
+      const normalized = normalizeModuleCode(original);
+      moduleCodes.add(original);
+      normalizedModuleCodes.add(normalized);
+      if (original !== normalized) {
+        moduleCodes.add(normalized); // Also try normalized version
+      }
+    }
+  });
+  
+  console.log(`🔗 Found course_codes: [${Array.from(courseCodes).join(', ')}]`);
+  console.log(`🔗 Found module_codes: [${Array.from(moduleCodes).join(', ')}]`);
+  
+  // If we should fetch assessments and we have module codes, fetch all assessments for those modules
+  if (shouldFetchAssessments && moduleCodes.size > 0) {
+    console.log(`📝 Fetching assessments for ${moduleCodes.size} module(s)...`);
+    
+    for (const moduleCode of moduleCodes) {
+      try {
+        // Try multiple search strategies to find assessments
+        
+        // Strategy 1: Direct filter by module_code
+        const assessmentEmbedding = await generateEmbedding(`assessments deadlines for module ${moduleCode}`);
+        let assessmentMatches = await queryPinecone(assessmentEmbedding, {
+          topK: 15,
+          namespace: namespace,
+          filter: { 
+            type: 'assessment',
+            module_code: moduleCode 
+          },
+          minScore: 0.15
+        });
+        
+        // Strategy 2: If no results, try with normalized code
+        if (assessmentMatches.length === 0) {
+          const normalizedCode = normalizeModuleCode(moduleCode);
+          if (normalizedCode !== moduleCode) {
+            assessmentMatches = await queryPinecone(assessmentEmbedding, {
+              topK: 15,
+              namespace: namespace,
+              filter: { 
+                type: 'assessment',
+                module_code: normalizedCode 
+              },
+              minScore: 0.15
+            });
+          }
+        }
+        
+        // Strategy 3: If still no results, try broader search with just type filter
+        if (assessmentMatches.length === 0) {
+          const broadMatches = await queryPinecone(assessmentEmbedding, {
+            topK: 20,
+            namespace: namespace,
+            filter: { type: 'assessment' },
+            minScore: 0.3
+          });
+          
+          // Filter manually for module code matches (handles bracket variations)
+          const normalizedTarget = normalizeModuleCode(moduleCode);
+          assessmentMatches = broadMatches.filter(m => {
+            const matchCode = normalizeModuleCode(m.metadata?.module_code);
+            return matchCode === normalizedTarget;
+          });
+        }
+        
+        // Add non-duplicate matches
+        assessmentMatches.forEach(match => {
+          if (!fetchedIds.has(match.id)) {
+            fetchedIds.add(match.id);
+            match._hierarchySource = `assessment for module ${moduleCode}`;
+            relatedItems.push(match);
+          }
+        });
+        
+        console.log(`   📝 Module ${moduleCode}: found ${assessmentMatches.length} assessments`);
+      } catch (error) {
+        console.error(`   ❌ Error fetching assessments for ${moduleCode}:`, error.message);
+      }
+    }
+  }
+  
+  // If user wants modules and we have course codes, fetch all modules for those courses
+  if (wantsModules && courseCodes.size > 0) {
+    console.log(`📚 Fetching modules for ${courseCodes.size} course(s)...`);
+    
+    for (const courseCode of courseCodes) {
+      try {
+        // Query Pinecone with filter for modules matching this course_code
+        const moduleEmbedding = await generateEmbedding(`modules for course ${courseCode}`);
+        const moduleMatches = await queryPinecone(moduleEmbedding, {
+          topK: 20, // Courses can have many modules
+          namespace: namespace,
+          filter: { 
+            type: 'module',
+            course_code: courseCode 
+          },
+          minScore: 0.15
+        });
+        
+        // Add non-duplicate matches
+        moduleMatches.forEach(match => {
+          if (!fetchedIds.has(match.id)) {
+            fetchedIds.add(match.id);
+            match._hierarchySource = `module in course ${courseCode}`;
+            relatedItems.push(match);
+          }
+        });
+        
+        console.log(`   📚 Course ${courseCode}: found ${moduleMatches.length} modules`);
+      } catch (error) {
+        console.error(`   ❌ Error fetching modules for ${courseCode}:`, error.message);
+      }
+    }
+  }
+  
+  // If we found a module, also check if there's a related course to add context
+  if (courseCodes.size > 0) {
+    for (const courseCode of courseCodes) {
+      // Check if we already have the course overview
+      const hasCourseOverview = matches.some(m => 
+        m.metadata?.type === 'course_overview' && m.metadata?.course_code === courseCode
+      );
+      
+      if (!hasCourseOverview) {
+        try {
+          const courseEmbedding = await generateEmbedding(`course overview ${courseCode}`);
+          const courseMatches = await queryPinecone(courseEmbedding, {
+            topK: 1,
+            namespace: namespace,
+            filter: { 
+              type: 'course_overview',
+              course_code: courseCode 
+            },
+            minScore: 0.2
+          });
+          
+          courseMatches.forEach(match => {
+            if (!fetchedIds.has(match.id)) {
+              fetchedIds.add(match.id);
+              match._hierarchySource = `parent course for ${courseCode}`;
+              relatedItems.push(match);
+            }
+          });
+        } catch (error) {
+          console.error(`   ❌ Error fetching course overview:`, error.message);
+        }
+      }
+    }
+  }
+  
+  console.log(`🔗 Hierarchy search complete: found ${relatedItems.length} additional related items`);
+  return relatedItems;
+}
+
+// Helper function: Extract structured suggestions from matches for UI tiles
+// IMPROVED: Only show suggestions AFTER user has provided enough context
+function extractSuggestionsFromMatches(matches, matchAnalysis, query, conversationHistory = []) {
+  const queryLower = query.toLowerCase();
+  
+  // Extract context from conversation history AND current query
+  const conversationContext = extractConversationContext(conversationHistory, query);
+  
+  // Check if user has provided enough context to show suggestions
+  // Suggestions should ONLY appear after a course, module, or assessment is identified
+  const hasEnoughContext = (
+    conversationContext.hasSpecificCourse ||
+    conversationContext.hasSpecificModule ||
+    conversationContext.hasSpecificAssessment ||
+    conversationContext.hasSpecificYear
+  );
+  
+  // If not enough context, don't show suggestions - let AI ask clarifying questions first
+  if (!hasEnoughContext) {
+    console.log(`📊 Suggestions suppressed: Not enough context yet (need course/module/assessment/year)`);
+    return [];
+  }
+  
+  // Only show suggestions when there's genuine ambiguity AND we have context
+  if (!matchAnalysis.hasSuggestions) {
+    return []; // No ambiguity = no suggestions needed
+  }
+  
+  // Detect what type of information the user is asking about
+  const queryContext = {
+    wantsDeadline: /deadline|due|submit|when|date/i.test(query),
+    wantsAssessment: /assessment|essay|exam|coursework|assignment|portfolio|presentation|report|task/i.test(query),
+    wantsModule: /module|unit|subject|course content|learning|teach/i.test(query),
+    wantsCourse: /course|programme|program|degree|qualification/i.test(query),
+    wantsTutor: /tutor|teacher|lecturer|who teaches|contact/i.test(query),
+    wantsCredits: /credit|points|weighting/i.test(query),
+    // Context from conversation
+    knownCourse: conversationContext.course,
+    knownModule: conversationContext.module,
+    knownYear: conversationContext.year
+  };
+  
+  // Get unique items from the ambiguous matches, prioritizing by hierarchy relevance
+  const seenTitles = new Set();
+  const candidateSuggestions = [];
+  
+  matchAnalysis.suggestions.forEach(suggestionGroup => {
+    suggestionGroup.items.forEach(item => {
+      const metadata = item.metadata || {};
+      const type = metadata.type;
+      
+      // Create a unique key to avoid duplicates
+      const uniqueKey = `${type}-${metadata.module_title || metadata.course_title || metadata.assessment_type}`;
+      
+      if (seenTitles.has(uniqueKey)) return;
+      seenTitles.add(uniqueKey);
+      
+      // Filter by context - only show relevant suggestions based on what we know
+      let isRelevant = true;
+      let relevanceScore = 0;
+      
+      // If we know the course from conversation, prioritize matching course
+      if (queryContext.knownCourse && metadata.course_code) {
+        if (metadata.course_code.toLowerCase().includes(queryContext.knownCourse.toLowerCase())) {
+          relevanceScore += 0.3;
+        } else {
+          isRelevant = false; // Filter out non-matching courses
+        }
+      }
+      
+      // If we know the year from conversation, prioritize matching year
+      if (queryContext.knownYear && metadata.year) {
+        if (metadata.year === queryContext.knownYear) {
+          relevanceScore += 0.2;
+        } else {
+          isRelevant = false; // Filter out non-matching years
+        }
+      }
+      
+      // If we know the module from conversation, prioritize matching module
+      if (queryContext.knownModule && metadata.module_title) {
+        if (metadata.module_title.toLowerCase().includes(queryContext.knownModule.toLowerCase())) {
+          relevanceScore += 0.3;
+        }
+      }
+      
+      if (!isRelevant) return;
+      
+      // Prioritize based on what user is asking
+      let priority = item.score + relevanceScore;
+      
+      if (queryContext.wantsAssessment && type === 'assessment') priority += 0.3;
+      if (queryContext.wantsModule && type === 'module') priority += 0.3;
+      if (queryContext.wantsCourse && type === 'course_overview') priority += 0.3;
+      if (queryContext.wantsDeadline && type === 'assessment') priority += 0.2;
+      
+      const suggestionData = buildSuggestionFromMatch(item, queryContext);
+      if (suggestionData) {
+        suggestionData.priority = priority;
+        candidateSuggestions.push(suggestionData);
+      }
+    });
+  });
+  
+  // Sort by priority and limit to TOP 3 only
+  console.log(`📊 Generating ${Math.min(candidateSuggestions.length, 3)} suggestions (context: course=${conversationContext.course || 'none'}, module=${conversationContext.module || 'none'}, year=${conversationContext.year || 'none'})`);
+  
+  return candidateSuggestions
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 3);
+}
+
+// Extract context from conversation history AND current query for smarter suggestions
+function extractConversationContext(conversationHistory = [], currentQuery = '') {
+  const context = {
+    course: null,
+    module: null,
+    year: null,
+    semester: null,
+    assessment: null,
+    // Flags to indicate if we have SPECIFIC context
+    hasSpecificCourse: false,
+    hasSpecificModule: false,
+    hasSpecificAssessment: false,
+    hasSpecificYear: false
+  };
+  
+  // Combine conversation history with current query for analysis
+  const allContent = [
+    ...conversationHistory.slice(-6).map(msg => msg.content || ''),
+    currentQuery
+  ];
+  
+  for (const content of allContent) {
+    const contentLower = content.toLowerCase();
+    
+    // Detect SPECIFIC course type (FD or BSc)
+    if (contentLower.includes('fd ') || contentLower.includes('foundation degree') || contentLower.includes('fd-')) {
+      context.course = 'FD';
+      context.hasSpecificCourse = true;
+    } else if (contentLower.includes('bsc') || contentLower.includes('bachelor') || contentLower.includes('top-up') || contentLower.includes('top up')) {
+      context.course = 'BSc';
+      context.hasSpecificCourse = true;
+    }
+    
+    // Detect SPECIFIC year (Year 1, Year 2, Year 3)
+    const yearMatch = contentLower.match(/year\s*(\d)|(\d)(?:st|nd|rd|th)\s+year/i);
+    if (yearMatch) {
+      context.year = yearMatch[1] || yearMatch[2];
+      context.hasSpecificYear = true;
+    }
+    
+    // Detect semester
+    const semMatch = contentLower.match(/semester\s*(\d)/i);
+    if (semMatch) {
+      context.semester = semMatch[1];
+    }
+    
+    // Detect SPECIFIC module mentions (look for actual module names)
+    const specificModulePatterns = [
+      // Named modules
+      /(?:psychology|anatomy|physiology|training|fitness|nutrition|sport|professional|research|academic|health|wellbeing|leadership|management|injury|rehabilitation|independent|study|performance|analysis)/i,
+      // "the X module" pattern
+      /(?:the\s+)?([a-z][a-z\s]{3,30})\s+module/i,
+      // "module: X" or "about X"
+      /(?:module[:\s]+|about\s+(?:the\s+)?)([a-z][a-z\s]{3,30})(?:\s+module)?/i,
+    ];
+    
+    for (const pattern of specificModulePatterns) {
+      const match = contentLower.match(pattern);
+      if (match) {
+        const moduleName = match[1] || match[0];
+        // Filter out generic words
+        const genericWords = ['the', 'a', 'an', 'my', 'your', 'this', 'that', 'what', 'which', 'assessments', 'deadlines', 'modules'];
+        if (moduleName && moduleName.length > 4 && !genericWords.includes(moduleName.trim())) {
+          context.module = moduleName.trim();
+          context.hasSpecificModule = true;
+        }
+      }
+    }
+    
+    // Detect SPECIFIC assessment types
+    const assessmentPatterns = /(?:essay|presentation|portfolio|exam|coursework|report|practical|case study|project|dissertation)/i;
+    if (assessmentPatterns.test(contentLower)) {
+      const match = contentLower.match(assessmentPatterns);
+      if (match) {
+        context.assessment = match[0];
+        context.hasSpecificAssessment = true;
+      }
+    }
+  }
+  
+  return context;
+}
+
+// Build a suggestion object from a match item - IMPROVED: More concise
+function buildSuggestionFromMatch(item, queryContext) {
+  const metadata = item.metadata || {};
+  const type = metadata.type || 'unknown';
+  
+  // Build title based on type - keep it concise
+  let title = '';
+  let typeIcon = '📄';
+  
+  switch (type) {
+    case 'module':
+      title = metadata.module_title || 'Unknown Module';
+      typeIcon = '📚';
+      break;
+    case 'assessment':
+      // For assessments, show the module name with assessment type
+      if (metadata.module_title) {
+        title = metadata.module_title;
+        if (metadata.assessment_type) {
+          title += ` (${metadata.assessment_type})`;
+        }
+      } else {
+        title = metadata.assessment_type || 'Assessment';
+      }
+      typeIcon = '📝';
+      break;
+    case 'course_overview':
+    case 'course':
+      title = metadata.course_title || 'Unknown Course';
+      typeIcon = '🎓';
+      break;
+    default:
+      title = metadata.module_title || metadata.course_title || metadata.assessment_type || 'Information';
+  }
+  
+  // Build CONCISE details - max 2-3 key details only
+  const details = [];
+  
+  // For modules: Year + Semester
+  if (type === 'module') {
+    if (metadata.year && metadata.semester) {
+      details.push({
+        icon: '📅',
+        label: `Y${metadata.year} S${metadata.semester}`
+      });
+    } else if (metadata.year) {
+      details.push({
+        icon: '📅',
+        label: `Year ${metadata.year}`
+      });
+    }
+  }
+  
+  // For assessments: Deadline is most important
+  if (type === 'assessment') {
+    if (metadata.deadline) {
+      details.push({
+        icon: '⏰',
+        label: metadata.deadline
+      });
+    }
+    if (metadata.weight) {
+      details.push({
+        icon: '⚖️',
+        label: metadata.weight
+      });
+    }
+  }
+  
+  // For courses: Level only
+  if (type === 'course_overview' || type === 'course') {
+    if (metadata.level) {
+      details.push({
+        icon: '📊',
+        label: metadata.level
+      });
+    }
+  }
+  
+  // Build concise, contextual click query
+  let clickQuery = '';
+  const moduleName = metadata.module_title || title;
+  const courseName = metadata.course_title || title;
+  
+  switch (type) {
+    case 'module':
+      // Follow hierarchy: If asking about module, next logical step is assessments
+      clickQuery = `What are the assessments and deadlines for ${moduleName}?`;
+      break;
+      
+    case 'assessment':
+      // Be specific about the assessment
+      clickQuery = `Tell me about the ${metadata.assessment_type || 'assessment'} in ${metadata.module_title || 'this module'}`;
+      break;
+      
+    case 'course_overview':
+    case 'course':
+      // Follow hierarchy: If asking about course, next logical step is modules
+      clickQuery = `What modules are in ${courseName}?`;
+      break;
+      
+    default:
+      clickQuery = `Tell me more about ${title}`;
+  }
+  
+  return {
+    id: item.match?.id || `suggestion-${Date.now()}-${Math.random()}`,
+    title: title,
+    details: details.slice(0, 3), // Max 3 details for cleaner UI
+    query: clickQuery,
+    score: item.score,
+    type: type,
+    icon: typeIcon
+  };
+}
+
+// Helper function: Analyze matches to identify similar items that should be presented as options
+// Now analyzes modules, assessments, AND courses for intelligent suggestions
+function analyzeMatchesForSuggestions(matches, query) {
+  const queryLower = query.toLowerCase();
+  
+  // Group matches by type (module, assessment, course, etc.)
+  const typeGroups = {};
+  
+  matches.forEach((match, idx) => {
+    const type = match.metadata?.type || 'unknown';
+    if (!typeGroups[type]) {
+      typeGroups[type] = [];
+    }
+    typeGroups[type].push({
+      index: idx + 1,
+      score: match.score,
+      metadata: match.metadata,
+      match: match
+    });
+  });
+  
+  const suggestions = [];
+  
+  // Analyze each type group for potential suggestions
+  Object.entries(typeGroups).forEach(([type, items]) => {
+    // For assessments: show suggestions if multiple assessments match
+    if (type === 'assessment' && items.length >= 2) {
+      const topScore = items[0].score;
+      const similarItems = items.filter(item => (topScore - item.score) < 0.20); // Wider threshold for assessments
+      
+      if (similarItems.length >= 2) {
+        suggestions.push({
+          type: type,
+          count: similarItems.length,
+          items: similarItems,
+          avgScore: similarItems.reduce((sum, item) => sum + item.score, 0) / similarItems.length
+        });
+      }
+    }
+    
+    // For modules: show suggestions if multiple modules match
+    if (type === 'module' && items.length >= 2) {
+      const topScore = items[0].score;
+      const similarItems = items.filter(item => (topScore - item.score) < 0.15);
+      
+      if (similarItems.length >= 2) {
+        suggestions.push({
+          type: type,
+          count: similarItems.length,
+          items: similarItems,
+          avgScore: similarItems.reduce((sum, item) => sum + item.score, 0) / similarItems.length
+        });
+      }
+    }
+    
+    // For courses: show suggestions if multiple courses match
+    if ((type === 'course_overview' || type === 'course') && items.length >= 2) {
+      const topScore = items[0].score;
+      const similarItems = items.filter(item => (topScore - item.score) < 0.15);
+      
+      if (similarItems.length >= 2) {
+        suggestions.push({
+          type: type,
+          count: similarItems.length,
+          items: similarItems,
+          avgScore: similarItems.reduce((sum, item) => sum + item.score, 0) / similarItems.length
+        });
+      }
+    }
+  });
+  
+  // CROSS-TYPE SUGGESTIONS: If query could relate to multiple types, suggest all
+  // E.g., "deadlines" could mean assessment deadlines or module information
+  const hasDeadlineQuery = /deadline|due|submit|when/i.test(query);
+  const hasGeneralQuery = /tell me|what|show|list|information/i.test(query);
+  
+  if (hasDeadlineQuery || hasGeneralQuery) {
+    // Check if we have high-scoring items across different types
+    const topItems = matches
+      .filter(m => m.score >= 0.4)
+      .slice(0, 8);
+    
+    const topTypes = new Set(topItems.map(m => m.metadata?.type));
+    
+    // If multiple types are relevant, create a mixed suggestion
+    if (topTypes.size >= 2 && suggestions.length === 0) {
+      const mixedItems = topItems.map((match, idx) => ({
+        index: idx + 1,
+        score: match.score,
+        metadata: match.metadata,
+        match: match
+      }));
+      
+      suggestions.push({
+        type: 'mixed',
+        count: mixedItems.length,
+        items: mixedItems,
+        avgScore: mixedItems.reduce((sum, item) => sum + item.score, 0) / mixedItems.length
+      });
+    }
+  }
+  
+  // Sort suggestions by average score
+  suggestions.sort((a, b) => b.avgScore - a.avgScore);
+  
+  return {
+    hasSuggestions: suggestions.length > 0,
+    suggestions: suggestions,
+    totalMatches: matches.length,
+    typeBreakdown: Object.fromEntries(
+      Object.entries(typeGroups).map(([type, items]) => [type, items.length])
+    )
+  };
+}
+
 // Helper function: Extract metadata filters from query (with conversation history context)
 function extractQueryMetadata(query, conversationHistory = []) {
   const metadata = {};
@@ -243,11 +863,36 @@ function extractQueryMetadata(query, conversationHistory = []) {
 }
 
 // Helper function: Generate chat response using Gemini
-async function generateChatResponse(query, context, conversationHistory = []) {
+async function generateChatResponse(query, context, conversationHistory = [], matches = []) {
   try {
     const systemPrompt = `You are Oracle, a specialized AI assistant for University Centre Leeds. Your primary role is to answer student questions by strictly using the information provided in the <CONTEXT> section.
 
-You must NOT use any external knowledge or make up information. Your purpose is to accurately present and guide students through the provided data. The data follows a hierarchy: Course -> Module -> Assessment.
+You must NOT use any external knowledge or make up information. Your purpose is to accurately present and guide students through the provided data.
+
+### DATA HIERARCHY (CRITICAL)
+The data follows a strict hierarchy linked by IDs:
+
+**COURSE** (top level)
+  └── Identified by: \`course_code\` (e.g., "FD-HAP-25/26")
+  └── Type: \`course_overview\`
+  
+  **MODULE** (belongs to a course)
+    └── Identified by: \`module_code\` (e.g., "W_HTH4C042R-2025.26")
+    └── Links to course via: \`course_code\` field in metadata
+    └── Type: \`module\`
+    
+    **ASSESSMENT** (belongs to a module)
+      └── Links to module via: \`module_code\` field in metadata
+      └── Type: \`assessment\`
+      └── Contains: deadline, weight, word_count, assessment_type
+
+**IMPORTANT RULES FOR HIERARCHY:**
+1. To find assessments for a module, look for documents where \`module_code\` matches the module's code
+2. To find modules for a course, look for documents where \`course_code\` matches the course's code
+3. When a student asks about a module's assessments, ALL documents with matching \`module_code\` and type \`assessment\` are the assessments for that module
+4. When a student asks about a course's modules, ALL documents with matching \`course_code\` and type \`module\` are the modules for that course
+5. NEVER say a module has no assessments unless you've checked all items in the <CONTEXT> with matching module_code
+6. Multiple assessments can exist for a single module (e.g., Essay 60%, Presentation 40%)
 
 ### Persona & Tone
 Friendly & Conversational: Your name is Oracle. Be helpful and approachable, not robotic.
@@ -257,6 +902,47 @@ Proactive Guide: Guide users step-by-step. Don't just answer; anticipate their n
 Greeting Policy: Greet the user only on the first turn of a conversation. For all follow-up messages, get straight to the point.
 
 Identity: You are Oracle, an assistant for University Centre Leeds students. Do not refer to yourself as a chatbot, AI, or language model.
+
+### Core Logic: Intelligent Suggestions Based on Top-K Matches
+**CRITICAL**: The embeddings model has returned multiple relevant matches from the vector database. Each match has a similarity score indicating relevance. You MUST intelligently use these matches to help disambiguate user queries.
+
+When multiple similar items exist in the <CONTEXT> (indicated by multiple entries with similar types but different details):
+
+1. **Recognize Ambiguity**: Identify when there are 2+ similar items that could match the user's query (e.g., multiple modules with similar names, multiple assessments, multiple courses).
+
+2. **Present Clear Options**: Format suggestions in a friendly, clear way:
+   - "I found [X] items that match your query. Which one are you looking for?"
+   - List each option with distinguishing details (year, semester, module code, course name, etc.)
+   - Use bullet points or numbered lists for clarity
+   
+3. **Use Metadata to Differentiate**: Each match includes metadata (year, semester, module_code, course_code, type, etc.). Use these to help the student distinguish between similar items:
+   - Example: "Are you asking about:
+     • **Academic Research and Study Skills** (Year 1, Semester 1, Module Code: W_HTH4C042R-2025.26)
+     • **Academic Research Methods** (Year 2, Semester 2, Module Code: W_HTH5C043R-2025.26)"
+
+4. **Rank by Relevance**: The matches are ordered by similarity score. When presenting options, prioritize higher-scoring matches first (they appear earlier in the context).
+
+5. **Smart Filtering**: If the user's query contains contextual clues (year, semester, course code), filter the suggestions accordingly before presenting them.
+
+6. **Follow-up Guidance**: After presenting options, invite the user to specify: "Please let me know which one you'd like to know more about!"
+
+**Example Scenarios**:
+
+Scenario 1: Student asks "What's the deadline for Academic Research?"
+- Context contains: Academic Research and Study Skills (Year 1) AND Advanced Academic Research (Year 2)
+- Response: "I found 2 modules matching 'Academic Research':
+  1. **Academic Research and Study Skills** (Year 1, Semester 1)
+  2. **Advanced Academic Research** (Year 2, Semester 2)
+  
+  Which module are you asking about?"
+
+Scenario 2: Student asks "Who is the tutor for Psychology?"
+- Context contains: Psychology of Sport (Year 1) AND Sport Psychology (Year 2) with different tutors
+- Response: "I see multiple Psychology modules. Which one do you mean?
+  • **Psychology of Sport and Exercise** (Year 1) - Tutor: Callum Lister
+  • **Sport Psychology** (Year 2) - Tutor: Dr. Sarah Jones
+  
+  Let me know which one you need information about!"
 
 ### Core Logic: Handling Vague Queries
 When a user's query (<QUERY>) is vague (e.g., "what's the deadline?", "who is my tutor?"), you must ask clarifying questions to narrow down their intent. Follow this process:
@@ -534,13 +1220,15 @@ app.post('/api/chat', async (req, res) => {
         // Generate helpful response even without context
         const helpfulResponse = await generateChatResponse(
           message, 
-          "No specific information found. Available information includes: University Centre Leeds Sport courses for FD Sport Performance and Exercise (W_FD1099FR), including modules for Year 1 and Year 2, assessments, deadlines, tutors (Ruth Tolson, James Thwaite, Callum Lister, Matthew Mosalski), and academic calendar 2025-2026.",
-          conversationHistory
+          "<CONTEXT>No specific information found. Available information includes: University Centre Leeds Sport courses for FD Sport Performance and Exercise (W_FD1099FR), including modules for Year 1 and Year 2, assessments, deadlines, tutors (Ruth Tolson, James Thwaite, Callum Lister, Matthew Mosalski), and academic calendar 2025-2026.</CONTEXT>",
+          conversationHistory,
+          []
         );
         
         return res.json({
           response: helpfulResponse,
           sources: [],
+          suggestions: [], // No suggestions when no matches found
           responseTime: Date.now() - startTime,
           noMatches: true
         });
@@ -570,7 +1258,31 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    // 3.6. If query specifically asks for assessments, do a secondary search for assessment documents
+    // 3.6. HIERARCHICAL SEARCH: Fetch related items based on course/module/assessment hierarchy
+    // This ensures that when a module is found, its assessments are also fetched
+    // And when a course is found, its modules are also fetched
+    console.log(`🔗 Starting hierarchical search based on initial matches...`);
+    const hierarchicalItems = await fetchHierarchicalRelatedItems(matches, message, namespace);
+    
+    if (hierarchicalItems.length > 0) {
+      console.log(`🔗 Adding ${hierarchicalItems.length} hierarchically related items to context`);
+      
+      // Add hierarchical items to matches (avoiding duplicates)
+      const existingIds = new Set(matches.map(m => m.id));
+      const newItems = hierarchicalItems.filter(item => !existingIds.has(item.id));
+      
+      // Group by type for better organization
+      const assessments = newItems.filter(i => i.metadata?.type === 'assessment');
+      const modules = newItems.filter(i => i.metadata?.type === 'module');
+      const courses = newItems.filter(i => i.metadata?.type === 'course_overview');
+      
+      // Add in order: courses first, then modules, then assessments
+      matches.push(...courses, ...modules, ...assessments);
+      
+      console.log(`   📊 Added: ${courses.length} courses, ${modules.length} modules, ${assessments.length} assessments`);
+    }
+
+    // 3.7. If query specifically asks for assessments, also do a generic secondary search
     if (isAssessmentQuery) {
       console.log(`📝 Assessment query detected - performing secondary search for assessment documents...`);
       
@@ -600,14 +1312,106 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    // 4. Prepare context from matches
-    const context = matches
-      .map((match, idx) => `[${idx + 1}] ${match.metadata?.text || ''}`)
-      .join('\n\n');
+    // 4. Analyze matches to identify potential ambiguities
+    const matchAnalysis = analyzeMatchesForSuggestions(matches, message);
+    console.log(`📊 Match analysis: ${matchAnalysis.hasSuggestions ? `Found ${matchAnalysis.suggestions.length} ambiguous groups` : 'No ambiguities detected'}`);
+    
+    // 4.5. Prepare enhanced context from matches with similarity scores and metadata
+    // Organize by hierarchy for clearer context
+    const courseMatches = matches.filter(m => m.metadata?.type === 'course_overview');
+    const moduleMatches = matches.filter(m => m.metadata?.type === 'module');
+    const assessmentMatches = matches.filter(m => m.metadata?.type === 'assessment');
+    const otherMatches = matches.filter(m => !['course_overview', 'module', 'assessment'].includes(m.metadata?.type));
+    
+    // Reorder matches: courses -> modules -> assessments -> other
+    const organizedMatches = [...courseMatches, ...moduleMatches, ...assessmentMatches, ...otherMatches];
+    
+    // Build hierarchy summary for AI
+    const hierarchySummary = [];
+    if (courseMatches.length > 0) {
+      const courseCodes = [...new Set(courseMatches.map(m => m.metadata?.course_code).filter(Boolean))];
+      hierarchySummary.push(`COURSES: ${courseCodes.join(', ')}`);
+    }
+    if (moduleMatches.length > 0) {
+      const moduleCodes = [...new Set(moduleMatches.map(m => m.metadata?.module_code).filter(Boolean))];
+      hierarchySummary.push(`MODULES: ${moduleCodes.join(', ')}`);
+    }
+    if (assessmentMatches.length > 0) {
+      const assessmentInfo = assessmentMatches.map(m => `${m.metadata?.assessment_type || 'Assessment'} (${m.metadata?.module_code})`);
+      hierarchySummary.push(`ASSESSMENTS: ${assessmentInfo.join(', ')}`);
+    }
+    
+    console.log(`📊 Context hierarchy: ${courseMatches.length} courses, ${moduleMatches.length} modules, ${assessmentMatches.length} assessments, ${otherMatches.length} other`);
+    
+    const contextParts = organizedMatches.map((match, idx) => {
+      const score = (match.score * 100).toFixed(1);
+      const metadata = match.metadata || {};
+      
+      // Highlight hierarchy links in metadata
+      const metadataEntries = Object.entries(metadata)
+        .filter(([key]) => key !== 'text' && key !== 'uploadTimestamp' && key !== 'namespace');
+      
+      // Prioritize hierarchy-relevant fields
+      const priorityFields = ['type', 'course_code', 'module_code', 'course_title', 'module_title', 'assessment_type'];
+      metadataEntries.sort((a, b) => {
+        const aIdx = priorityFields.indexOf(a[0]);
+        const bIdx = priorityFields.indexOf(b[0]);
+        if (aIdx === -1 && bIdx === -1) return 0;
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+      
+      const metadataStr = metadataEntries
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(', ');
+      
+      return `[Match ${idx + 1}] (Relevance: ${score}%)${metadataStr ? ` [${metadataStr}]` : ''}
+${match.metadata?.text || ''}`;
+    });
+    
+    // Build context with ambiguity analysis
+    let context = `<CONTEXT>
+The following are the top ${organizedMatches.length} most relevant items from the knowledge base, organized by hierarchy (Courses -> Modules -> Assessments).
+Each item includes a relevance score (higher = more relevant) and metadata to help you differentiate between similar items.
 
-    // 5. Generate response using Gemini with conversation history
+📊 HIERARCHY OVERVIEW:
+${hierarchySummary.length > 0 ? hierarchySummary.join('\n') : 'No structured hierarchy data found.'}
+
+🔗 HIERARCHY LINKS (use these to find related items):
+- Assessments link to Modules via: module_code
+- Modules link to Courses via: course_code
+- When asked about assessments for a module, look for ALL items with type=assessment AND matching module_code
+- When asked about modules for a course, look for ALL items with type=module AND matching course_code
+`;
+
+    // Add ambiguity warning if multiple similar items detected
+    if (matchAnalysis.hasSuggestions) {
+      context += `\n⚠️ AMBIGUITY DETECTED: The search found multiple similar items that could match the student's query:\n`;
+      matchAnalysis.suggestions.forEach(suggestion => {
+        const typeLabel = suggestion.type === 'assessment' ? 'assessments' : 
+                         suggestion.type === 'module' ? 'modules' : 
+                         suggestion.type === 'course_overview' ? 'courses' : `${suggestion.type}s`;
+        context += `- ${suggestion.count} ${typeLabel} with similar relevance (avg: ${(suggestion.avgScore * 100).toFixed(1)}%)\n`;
+        suggestion.items.forEach(item => {
+          const title = item.metadata?.module_title || item.metadata?.course_title || item.metadata?.assessment_type || item.metadata?.type || 'Unknown';
+          const details = [];
+          if (item.metadata?.year) details.push(`Year ${item.metadata.year}`);
+          if (item.metadata?.semester) details.push(`Semester ${item.metadata.semester}`);
+          if (item.metadata?.module_code) details.push(`Module: ${item.metadata.module_code}`);
+          if (item.metadata?.course_code) details.push(`Course: ${item.metadata.course_code}`);
+          if (item.metadata?.deadline) details.push(`Deadline: ${item.metadata.deadline}`);
+          context += `  • Match ${item.index}: ${title}${details.length ? ` (${details.join(', ')})` : ''} - ${(item.score * 100).toFixed(1)}%\n`;
+        });
+      });
+      context += `\n**ACTION REQUIRED**: Present these as options to the student for clarification.\n`;
+    }
+
+    context += `\n--- DOCUMENTS ---\n\n${contextParts.join('\n\n---\n\n')}\n</CONTEXT>`;
+
+    // 5. Generate response using Gemini with conversation history and match information
     const llmStartTime = Date.now();
-    const aiResponse = await generateChatResponse(message, context, conversationHistory);
+    const aiResponse = await generateChatResponse(message, context, conversationHistory, matches);
     console.log(`🤖 LLM response generated in ${Date.now() - llmStartTime}ms`);
 
     // 6. Format sources
@@ -621,9 +1425,14 @@ app.post('/api/chat', async (req, res) => {
     const responseTime = Date.now() - startTime;
     console.log(`✅ Total response time: ${responseTime}ms`);
 
+    // Extract structured suggestions if detected (now with conversation context)
+    const suggestions = extractSuggestionsFromMatches(matches, matchAnalysis, message, conversationHistory);
+    console.log(`📊 Extracted ${suggestions.length} structured suggestions for UI tiles (max 3, context-aware)`);
+
     const result = {
       response: aiResponse,
       sources,
+      suggestions, // Add structured suggestions for UI tiles
       responseTime,
       cached: false
     };

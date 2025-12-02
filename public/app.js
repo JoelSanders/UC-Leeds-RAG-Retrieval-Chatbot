@@ -1,4 +1,12 @@
-// API Configuration
+/**
+ * UC Oracle - Stunning Chatbot Application
+ * A breathtaking, innovative AI assistant interface
+ */
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
+
 const API_BASE_URL = 'http://localhost:3000/api';
 
 // Academic Terminology Glossary
@@ -38,213 +46,483 @@ const ACADEMIC_GLOSSARY = {
     'summative assessment': 'Assessment that counts towards the final grade for a module'
 };
 
-// DOM Elements
-const chatMessages = document.getElementById('chatMessages');
-const messageInput = document.getElementById('messageInput');
-const sendButton = document.getElementById('sendButton');
-const statusElement = document.getElementById('status');
-const messageCountElement = document.getElementById('messageCount');
-const avgResponseElement = document.getElementById('avgResponse');
-const contextSizeElement = document.getElementById('contextSize');
-const documentInput = document.getElementById('documentInput');
-const uploadButton = document.getElementById('uploadButton');
-const uploadStatus = document.getElementById('uploadStatus');
-const themeToggle = document.getElementById('themeToggle');
-const clearChatButton = document.getElementById('clearChatButton');
+// ═══════════════════════════════════════════════════════════════════════════
+// DOM ELEMENTS
+// ═══════════════════════════════════════════════════════════════════════════
 
-// State
-let messageCount = 0;
-let totalResponseTime = 0;
-let conversationHistory = []; // Store conversation history for context
-const MAX_HISTORY_LENGTH = 20; // Maximum number of messages to keep in history (10 exchanges)
+const elements = {
+    // Main elements
+    chatMessages: document.getElementById('chatMessages'),
+    messageInput: document.getElementById('messageInput'),
+    sendButton: document.getElementById('sendButton'),
+    connectionStatus: document.getElementById('connectionStatus'),
+    welcomeExperience: document.getElementById('welcomeExperience'),
+    
+    // Stats
+    messageCount: document.getElementById('messageCount'),
+    avgResponse: document.getElementById('avgResponse'),
+    charCount: document.getElementById('charCount'),
+    statMessages: document.getElementById('statMessages'),
+    statAvgTime: document.getElementById('statAvgTime'),
+    statContext: document.getElementById('statContext'),
+    
+    // Side panel
+    sidePanel: document.getElementById('sidePanel'),
+    uploadBtn: document.getElementById('uploadBtn'),
+    closePanelBtn: document.getElementById('closePanelBtn'),
+    documentInput: document.getElementById('documentInput'),
+    uploadButton: document.getElementById('uploadButton'),
+    uploadStatus: document.getElementById('uploadStatus'),
+    
+    // Theme and actions
+    themeToggle: document.getElementById('themeToggle'),
+    clearChatButton: document.getElementById('clearChatButton'),
+    
+    // Quick actions
+    quickActions: document.querySelectorAll('.quick-action')
+};
 
-// Initialize
-checkServerStatus();
-initializeTheme();
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Create animated AI icon using Anime.js
-function createAnimatedAIIcon(container) {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 40 40');
-    svg.setAttribute('width', '100%');
-    svg.setAttribute('height', '100%');
-    svg.style.position = 'absolute';
-    svg.style.top = '0';
-    svg.style.left = '0';
+let state = {
+    messageCount: 0,
+    totalResponseTime: 0,
+    conversationHistory: [],
+    isLoading: false
+};
+
+const MAX_HISTORY_LENGTH = 20;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+document.addEventListener('DOMContentLoaded', () => {
+    initializeApp();
+});
+
+function initializeApp() {
+    initializeTheme();
+    initializeEventListeners();
+    checkServerStatus();
+    configureMarked();
     
-    // Create brain/circuit pattern
-    const brain = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    brain.setAttribute('cx', '20');
-    brain.setAttribute('cy', '20');
-    brain.setAttribute('r', '16');
-    brain.setAttribute('fill', 'none');
-    brain.setAttribute('stroke', '#00e5ff');
-    brain.setAttribute('stroke-width', '2');
-    brain.setAttribute('opacity', '0.8');
-    
-    // Create neural nodes
-    const nodes = [];
-    for (let i = 0; i < 6; i++) {
-        const node = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        const angle = (i * Math.PI * 2) / 6;
-        const radius = 12;
-        const x = 20 + Math.cos(angle) * radius;
-        const y = 20 + Math.sin(angle) * radius;
-        
-        node.setAttribute('cx', x);
-        node.setAttribute('cy', y);
-        node.setAttribute('r', '2');
-        node.setAttribute('fill', '#00bdee');
-        node.setAttribute('class', `neural-node node-${i}`);
-        nodes.push(node);
-        svg.appendChild(node);
-    }
-    
-    // Create connecting lines
-    const connections = [];
-    for (let i = 0; i < 6; i++) {
-        const next = (i + 1) % 6;
-        const angle1 = (i * Math.PI * 2) / 6;
-        const angle2 = (next * Math.PI * 2) / 6;
-        const radius = 12;
-        
-        const x1 = 20 + Math.cos(angle1) * radius;
-        const y1 = 20 + Math.sin(angle1) * radius;
-        const x2 = 20 + Math.cos(angle2) * radius;
-        const y2 = 20 + Math.sin(angle2) * radius;
-        
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', x1);
-        line.setAttribute('y1', y1);
-        line.setAttribute('x2', x2);
-        line.setAttribute('y2', y2);
-        line.setAttribute('stroke', '#00bdee');
-        line.setAttribute('stroke-width', '1');
-        line.setAttribute('opacity', '0.6');
-        line.setAttribute('class', `connection connection-${i}`);
-        connections.push(line);
-        svg.appendChild(line);
-    }
-    
-    svg.appendChild(brain);
-    container.appendChild(svg);
-    
-    // Animate the elements
-    const animateIcon = () => {
-        // Animate nodes pulsing
-        anime({
-            targets: '.neural-node',
-            scale: [1, 1.5, 1],
-            opacity: [0.8, 1, 0.8],
-            duration: 2000,
-            delay: anime.stagger(200),
-            loop: true,
-            easing: 'easeInOutSine'
-        });
-        
-        // Animate connections
-        anime({
-            targets: '.connection',
-            opacity: [0.3, 1, 0.3],
-            strokeWidth: [1, 2, 1],
-            duration: 3000,
-            delay: anime.stagger(300),
-            loop: true,
-            easing: 'easeInOutSine'
-        });
-        
-        // Animate brain outline
-        anime({
-            targets: brain,
-            strokeDasharray: [0, 100],
-            strokeDashoffset: [0, -100],
-            duration: 4000,
-            loop: true,
-            easing: 'linear'
-        });
-    };
-    
-    // Start animation after a short delay
-    setTimeout(animateIcon, 100);
-    
-    return svg;
+    // Periodic status check
+    setInterval(checkServerStatus, 30000);
 }
 
-// Create custom animated loading element
-function createCustomLoadingAnimation(container) {
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 36 12');
-    svg.setAttribute('width', '36px');
-    svg.setAttribute('height', '12px');
-    svg.style.margin = '0 auto';
-    svg.style.display = 'block';
-    
-    // Create 3 animated circles
-    for (let i = 0; i < 3; i++) {
-        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('cx', 6 + (i * 12));
-        circle.setAttribute('cy', '6');
-        circle.setAttribute('r', '2.5');
-        circle.setAttribute('fill', '#00bdee');
-        circle.setAttribute('opacity', '0.6');
-        circle.setAttribute('class', `loading-circle loading-circle-${i}`);
-        svg.appendChild(circle);
+function configureMarked() {
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false
+        });
     }
-    
-    container.appendChild(svg);
-    
-    // Animate the loading circles
-    const animateLoading = () => {
-        // Staggered bounce animation - reduced movement
-        anime({
-            targets: '.loading-circle',
-            translateY: [-4, -8, -4],
-            scale: [1, 1.3, 1],
-            opacity: [0.6, 1, 0.6],
-            duration: 1000,
-            delay: anime.stagger(120),
-            loop: true,
-            easing: 'easeInOutSine'
-        });
-        
-        // Add a subtle glow effect
-        anime({
-            targets: '.loading-circle',
-            filter: [
-                'drop-shadow(0 0 2px rgba(0, 189, 238, 0.3))',
-                'drop-shadow(0 0 6px rgba(0, 189, 238, 0.8))',
-                'drop-shadow(0 0 2px rgba(0, 189, 238, 0.3))'
-            ],
-            duration: 1000,
-            delay: anime.stagger(120),
-            loop: true,
-            easing: 'easeInOutSine'
-        });
-    };
-    
-    // Start animation
-    setTimeout(animateLoading, 100);
-    
-    return svg;
 }
 
-// Configure marked.js for better rendering
-if (typeof marked !== 'undefined') {
-    marked.setOptions({
-        breaks: true,
-        gfm: true,
-        headerIds: false,
-        mangle: false
+// ═══════════════════════════════════════════════════════════════════════════
+// EVENT LISTENERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function initializeEventListeners() {
+    // Message input
+    elements.messageInput.addEventListener('input', handleInputChange);
+    elements.messageInput.addEventListener('keydown', handleInputKeydown);
+    
+    // Buttons
+    elements.sendButton.addEventListener('click', sendMessage);
+    elements.themeToggle.addEventListener('click', toggleTheme);
+    elements.clearChatButton.addEventListener('click', clearChat);
+    elements.uploadButton.addEventListener('click', uploadDocument);
+    
+    // Side panel
+    elements.uploadBtn?.addEventListener('click', () => toggleSidePanel(true));
+    elements.closePanelBtn?.addEventListener('click', () => toggleSidePanel(false));
+    
+    // Quick actions
+    elements.quickActions.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const query = btn.dataset.query;
+            if (query) {
+                elements.messageInput.value = query;
+                sendMessage();
+            }
+        });
+    });
+    
+    // Close panel on outside click
+    document.addEventListener('click', (e) => {
+        if (elements.sidePanel?.classList.contains('open') && 
+            !elements.sidePanel.contains(e.target) && 
+            e.target !== elements.uploadBtn) {
+            toggleSidePanel(false);
+        }
     });
 }
 
-// Function to add tooltips to academic terms
+function handleInputChange() {
+    // Auto-resize textarea
+    const input = elements.messageInput;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+    
+    // Update character count
+    if (elements.charCount) {
+        elements.charCount.textContent = input.value.length;
+    }
+}
+
+function handleInputKeydown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THEME MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function initializeTheme() {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'light') {
+        document.body.classList.add('light-mode');
+    }
+}
+
+function toggleTheme() {
+    const isLightMode = document.body.classList.toggle('light-mode');
+    localStorage.setItem('theme', isLightMode ? 'light' : 'dark');
+    
+    // Animate toggle button
+    elements.themeToggle.style.transform = 'scale(0.9)';
+    setTimeout(() => {
+        elements.themeToggle.style.transform = '';
+    }, 100);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVER STATUS
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function checkServerStatus() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/health`);
+        const data = await response.json();
+        
+        if (data.status === 'ok' && data.pineconeConnected) {
+            updateConnectionStatus('connected', 'Connected');
+        } else {
+            updateConnectionStatus('error', 'Not Connected');
+        }
+    } catch (error) {
+        console.error('Server status check failed:', error);
+        updateConnectionStatus('error', 'Offline');
+    }
+}
+
+function updateConnectionStatus(status, text) {
+    if (elements.connectionStatus) {
+        elements.connectionStatus.className = `connection-status ${status}`;
+        const label = elements.connectionStatus.querySelector('.status-label');
+        if (label) label.textContent = text;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SIDE PANEL
+// ═══════════════════════════════════════════════════════════════════════════
+
+function toggleSidePanel(open) {
+    if (elements.sidePanel) {
+        elements.sidePanel.classList.toggle('open', open);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MESSAGING
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function sendMessage() {
+    const message = elements.messageInput.value.trim();
+    if (!message || state.isLoading) return;
+    
+    // Clear input
+    elements.messageInput.value = '';
+    elements.messageInput.style.height = 'auto';
+    if (elements.charCount) elements.charCount.textContent = '0';
+    
+    // Hide welcome experience
+    hideWelcomeExperience();
+    
+    // Add user message
+    addMessage('user', message);
+    
+    // Set loading state
+    setLoadingState(true);
+    const loadingId = addLoadingMessage();
+    
+    const startTime = Date.now();
+    
+    try {
+        // Add to conversation history
+        state.conversationHistory.push({ role: 'user', content: message });
+        
+        // Trim history if needed
+        if (state.conversationHistory.length > MAX_HISTORY_LENGTH) {
+            state.conversationHistory = state.conversationHistory.slice(-MAX_HISTORY_LENGTH);
+        }
+        
+        // Send to API
+        const response = await fetch(`${API_BASE_URL}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message,
+                conversationHistory: state.conversationHistory,
+                namespace: 'ucl-courses'
+            })
+        });
+        
+        const data = await response.json();
+        const responseTime = Date.now() - startTime;
+        
+        // Remove loading message
+        removeLoadingMessage(loadingId);
+        
+        if (response.ok) {
+            // Add assistant response
+            addMessage('assistant', data.response, data.sources, false, data.suggestions);
+            
+            // Update conversation history
+            state.conversationHistory.push({ role: 'assistant', content: data.response });
+            
+            // Update stats
+            state.messageCount++;
+            state.totalResponseTime += responseTime;
+            updateStats();
+        } else {
+            const errorMsg = `Error: ${data.error || 'Something went wrong'}`;
+            addMessage('assistant', errorMsg, null, true);
+            state.conversationHistory.push({ role: 'assistant', content: errorMsg });
+        }
+        
+    } catch (error) {
+        console.error('Error sending message:', error);
+        removeLoadingMessage(loadingId);
+        const errorMsg = 'Sorry, I encountered an error. Please make sure the server is running.';
+        addMessage('assistant', errorMsg, null, true);
+        state.conversationHistory.push({ role: 'assistant', content: errorMsg });
+    } finally {
+        setLoadingState(false);
+    }
+}
+
+function setLoadingState(loading) {
+    state.isLoading = loading;
+    elements.messageInput.disabled = loading;
+    elements.sendButton.disabled = loading;
+    elements.sendButton.classList.toggle('loading', loading);
+}
+
+function hideWelcomeExperience() {
+    if (elements.welcomeExperience) {
+        elements.welcomeExperience.style.opacity = '0';
+        elements.welcomeExperience.style.transform = 'scale(0.95)';
+        setTimeout(() => {
+            elements.welcomeExperience.style.display = 'none';
+        }, 300);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MESSAGE RENDERING
+// ═══════════════════════════════════════════════════════════════════════════
+
+function addMessage(role, content, sources = null, isError = false, suggestions = null) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${role}`;
+    
+    // Avatar
+    const avatar = document.createElement('div');
+    avatar.className = `message-avatar ${role === 'assistant' ? 'ai-avatar' : ''}`;
+    
+    if (role === 'user') {
+        avatar.innerHTML = '👤';
+    } else {
+        avatar.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; color: var(--text-inverse);">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+            </svg>
+        `;
+    }
+    
+    // Content
+    const messageContent = document.createElement('div');
+    messageContent.className = 'message-content';
+    
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    
+    // Format content
+    if (role === 'assistant' && typeof marked !== 'undefined') {
+        const html = marked.parse(content);
+        bubble.innerHTML = addAcademicTooltips(html);
+    } else {
+        bubble.textContent = content;
+    }
+    
+    if (isError) {
+        bubble.style.background = 'rgba(239, 68, 68, 0.1)';
+        bubble.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+    }
+    
+    messageContent.appendChild(bubble);
+    
+    // Add suggestion tiles if present
+    if (suggestions && suggestions.length > 0) {
+        const tilesContainer = createSuggestionTiles(suggestions);
+        messageContent.appendChild(tilesContainer);
+    }
+    
+    messageDiv.appendChild(avatar);
+    messageDiv.appendChild(messageContent);
+    
+    elements.chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+    
+    return messageDiv;
+}
+
+function addLoadingMessage() {
+    const loadingId = `loading-${Date.now()}`;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message assistant';
+    messageDiv.id = loadingId;
+    
+    const avatar = document.createElement('div');
+    avatar.className = 'message-avatar ai-avatar';
+    avatar.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; color: var(--text-inverse);">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+        </svg>
+    `;
+    
+    const messageContent = document.createElement('div');
+    messageContent.className = 'message-content';
+    
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble message-loading';
+    bubble.innerHTML = `
+        <div class="loading-dots">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+    `;
+    
+    messageContent.appendChild(bubble);
+    messageDiv.appendChild(avatar);
+    messageDiv.appendChild(messageContent);
+    
+    elements.chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+    
+    return loadingId;
+}
+
+function removeLoadingMessage(loadingId) {
+    const loadingElement = document.getElementById(loadingId);
+    if (loadingElement) {
+        loadingElement.remove();
+    }
+}
+
+function scrollToBottom() {
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUGGESTION TILES
+// ═══════════════════════════════════════════════════════════════════════════
+
+function createSuggestionTiles(suggestions) {
+    const container = document.createElement('div');
+    container.className = 'suggestion-tiles';
+    
+    const header = document.createElement('div');
+    header.className = 'suggestion-tiles-header';
+    header.textContent = 'Choose an option:';
+    container.appendChild(header);
+    
+    suggestions.forEach((suggestion, index) => {
+        const tile = document.createElement('div');
+        tile.className = 'suggestion-tile';
+        tile.setAttribute('role', 'button');
+        tile.setAttribute('tabindex', '0');
+        
+        // Title
+        const title = document.createElement('div');
+        title.className = 'suggestion-tile-title';
+        title.textContent = suggestion.title;
+        tile.appendChild(title);
+        
+        // Details
+        if (suggestion.details && suggestion.details.length > 0) {
+            const details = document.createElement('div');
+            details.className = 'suggestion-tile-details';
+            
+            suggestion.details.forEach(detail => {
+                const detailSpan = document.createElement('span');
+                detailSpan.className = 'suggestion-tile-detail';
+                detailSpan.innerHTML = `<span>${detail.icon}</span><span>${detail.label}</span>`;
+                details.appendChild(detailSpan);
+            });
+            
+            tile.appendChild(details);
+        }
+        
+        // Click handler
+        tile.addEventListener('click', () => handleSuggestionClick(suggestion.query, tile));
+        tile.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleSuggestionClick(suggestion.query, tile);
+            }
+        });
+        
+        container.appendChild(tile);
+    });
+    
+    return container;
+}
+
+function handleSuggestionClick(query, tileElement) {
+    // Visual feedback
+    tileElement.style.transform = 'translateX(8px) scale(0.98)';
+    tileElement.style.opacity = '0.6';
+    
+    setTimeout(() => {
+        elements.messageInput.value = query;
+        sendMessage();
+    }, 150);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACADEMIC TOOLTIPS
+// ═══════════════════════════════════════════════════════════════════════════
+
 function addAcademicTooltips(htmlContent) {
-    // Create a temporary div to parse HTML
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = htmlContent;
     
-    // Function to process text nodes
     function processTextNode(node) {
         if (node.nodeType !== Node.TEXT_NODE) return;
         
@@ -252,18 +530,13 @@ function addAcademicTooltips(htmlContent) {
         let hasReplacements = false;
         let newHTML = text;
         
-        // Sort terms by length (longest first) to avoid partial matches
         const terms = Object.keys(ACADEMIC_GLOSSARY).sort((a, b) => b.length - a.length);
-        
-        // Track positions of already replaced terms to avoid overlapping
         const replacedRanges = [];
         
         terms.forEach(term => {
-            // Create a case-insensitive regex with word boundaries
             const regex = new RegExp(`\\b(${term})\\b`, 'gi');
             
             text.replace(regex, (match, capture, offset) => {
-                // Check if this position overlaps with already replaced ranges
                 const overlaps = replacedRanges.some(range => 
                     (offset >= range.start && offset < range.end) ||
                     (offset + match.length > range.start && offset + match.length <= range.end)
@@ -272,16 +545,9 @@ function addAcademicTooltips(htmlContent) {
                 if (!overlaps) {
                     const definition = ACADEMIC_GLOSSARY[term.toLowerCase()];
                     const replacement = `<span class="academic-term">${match}<span class="tooltip">${definition}</span></span>`;
-                    
-                    // Replace in newHTML
                     newHTML = newHTML.replace(match, replacement);
                     hasReplacements = true;
-                    
-                    // Track this replacement
-                    replacedRanges.push({
-                        start: offset,
-                        end: offset + match.length
-                    });
+                    replacedRanges.push({ start: offset, end: offset + match.length });
                 }
             });
         });
@@ -293,9 +559,7 @@ function addAcademicTooltips(htmlContent) {
         }
     }
     
-    // Recursively process all text nodes, but skip code blocks and links
     function walkNodes(node) {
-        // Skip code elements, pre elements, and links
         if (node.nodeType === Node.ELEMENT_NODE && 
             (node.tagName === 'CODE' || node.tagName === 'PRE' || node.tagName === 'A')) {
             return;
@@ -304,7 +568,6 @@ function addAcademicTooltips(htmlContent) {
         if (node.nodeType === Node.TEXT_NODE) {
             processTextNode(node);
         } else if (node.childNodes) {
-            // Convert to array to avoid issues with live NodeList
             Array.from(node.childNodes).forEach(child => walkNodes(child));
         }
     }
@@ -313,441 +576,154 @@ function addAcademicTooltips(htmlContent) {
     return tempDiv.innerHTML;
 }
 
-// Auto-resize textarea
-messageInput.addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 150) + 'px';
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Send message on Enter (Shift+Enter for new line)
-messageInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
-
-// Send button click
-sendButton.addEventListener('click', sendMessage);
-
-// Upload button click
-uploadButton.addEventListener('click', uploadDocument);
-
-// Theme toggle click
-themeToggle.addEventListener('click', toggleTheme);
-
-// Clear chat button click
-clearChatButton.addEventListener('click', clearChat);
-
-// Check server status
-async function checkServerStatus() {
-    try {
-        const response = await fetch(`${API_BASE_URL}/health`);
-        const data = await response.json();
-        
-        if (data.status === 'ok' && data.pineconeConnected) {
-            updateStatus('connected', 'Connected');
-        } else {
-            updateStatus('error', 'Not Connected');
-        }
-    } catch (error) {
-        console.error('Error checking server status:', error);
-        updateStatus('error', 'Server Offline');
-    }
-}
-
-// Update status indicator
-function updateStatus(status, text) {
-    statusElement.className = `status-indicator ${status}`;
-    statusElement.querySelector('.status-text').textContent = text;
-}
-
-// Send message
-async function sendMessage() {
-    const message = messageInput.value.trim();
-    
-    if (!message) return;
-    
-    // Clear input
-    messageInput.value = '';
-    messageInput.style.height = 'auto';
-    
-    // Remove welcome message if it exists
-    const welcomeMessage = document.querySelector('.welcome-message');
-    if (welcomeMessage) {
-        welcomeMessage.remove();
-    }
-    
-    // Add user message
-    addMessage('user', message);
-    
-    // Disable input while processing
-    messageInput.disabled = true;
-    sendButton.disabled = true;
-    
-    // Show loading indicator
-    const loadingId = addLoadingMessage();
-    
-    const startTime = Date.now();
-    
-    try {
-        // Add user message to conversation history
-        conversationHistory.push({
-            role: 'user',
-            content: message
-        });
-        
-        // Trim conversation history if it exceeds maximum length
-        // Keep only the most recent messages
-        if (conversationHistory.length > MAX_HISTORY_LENGTH) {
-            conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
-        }
-        
-        console.log(`💬 Sending message with ${conversationHistory.length} messages in context`);
-        
-        const response = await fetch(`${API_BASE_URL}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ 
-                message,
-                conversationHistory: conversationHistory, // Send conversation history for context
-                namespace: 'ucl-courses' // Query the course data namespace
-            }),
-        });
-        
-        const data = await response.json();
-        
-        const responseTime = Date.now() - startTime;
-        
-        // Remove loading indicator
-        removeLoadingMessage(loadingId);
-        
-        if (response.ok) {
-            // Add assistant message with sources
-            addMessage('assistant', data.response, data.sources);
-            
-            // Add assistant response to conversation history
-            conversationHistory.push({
-                role: 'assistant',
-                content: data.response
-            });
-            
-            // Update stats
-            messageCount++;
-            totalResponseTime += responseTime;
-            updateStats();
-        } else {
-            const errorMessage = `Error: ${data.error || 'Something went wrong'}`;
-            addMessage('assistant', errorMessage, null, true);
-            
-            // Add error to conversation history as well
-            conversationHistory.push({
-                role: 'assistant',
-                content: errorMessage
-            });
-        }
-        
-    } catch (error) {
-        console.error('Error sending message:', error);
-        removeLoadingMessage(loadingId);
-        const errorMessage = 'Sorry, I encountered an error. Please make sure the server is running.';
-        addMessage('assistant', errorMessage, null, true);
-        
-        // Add error to conversation history
-        conversationHistory.push({
-            role: 'assistant',
-            content: errorMessage
-        });
-    } finally {
-        // Re-enable input
-        messageInput.disabled = false;
-        sendButton.disabled = false;
-        messageInput.focus();
-    }
-}
-
-// Add message to chat
-function addMessage(role, content, sources = null, isError = false) {
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${role}`;
-    
-    const avatar = document.createElement('div');
-    avatar.className = 'message-avatar';
-    
-    if (role === 'user') {
-        avatar.textContent = '👤';
-    } else {
-        // Add animated AI icon
-        avatar.classList.add('ai-avatar');
-        const iconContainer = document.createElement('div');
-        iconContainer.style.width = '100%';
-        iconContainer.style.height = '100%';
-        iconContainer.style.position = 'relative';
-        iconContainer.style.pointerEvents = 'none';
-        
-        // Create animated AI icon
-        createAnimatedAIIcon(iconContainer);
-        avatar.appendChild(iconContainer);
-    }
-    
-    const messageContent = document.createElement('div');
-    messageContent.className = 'message-content';
-    
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    
-    // Format content based on role
-    if (role === 'assistant' && typeof marked !== 'undefined') {
-        // Parse markdown for assistant messages
-        const markdownHTML = marked.parse(content);
-        // Add tooltips to academic terms
-        bubble.innerHTML = addAcademicTooltips(markdownHTML);
-    } else {
-        // Plain text for user messages
-        bubble.textContent = content;
-    }
-    
-    if (isError) {
-        bubble.style.background = 'rgba(239, 68, 68, 0.2)';
-        bubble.style.borderLeft = '3px solid #ef4444';
-    }
-    
-    messageContent.appendChild(bubble);
-    
-    // Sources are hidden by default
-    // Uncomment below to show sources with each response
-    /*
-    if (sources && sources.length > 0) {
-        const sourcesDiv = document.createElement('div');
-        sourcesDiv.className = 'message-sources';
-        
-        const sourcesTitle = document.createElement('div');
-        sourcesTitle.className = 'message-sources-title';
-        sourcesTitle.textContent = '📚 Sources:';
-        sourcesDiv.appendChild(sourcesTitle);
-        
-        sources.forEach(source => {
-            const sourceItem = document.createElement('div');
-            sourceItem.className = 'source-item';
-            sourceItem.textContent = `[${source.id}] Score: ${(source.score * 100).toFixed(1)}% - ${source.text}`;
-            sourcesDiv.appendChild(sourceItem);
-        });
-        
-        messageContent.appendChild(sourcesDiv);
-    }
-    */
-    
-    messageDiv.appendChild(avatar);
-    messageDiv.appendChild(messageContent);
-    
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    // Animation is automatically started in createAnimatedAIIcon
-    
-    return messageDiv;
-}
-
-// Add loading indicator
-function addLoadingMessage() {
-    const loadingId = `loading-${Date.now()}`;
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'message assistant';
-    messageDiv.id = loadingId;
-    
-    const avatar = document.createElement('div');
-    avatar.className = 'message-avatar ai-avatar';
-    
-    // Add animated AI icon
-    const iconContainer = document.createElement('div');
-    iconContainer.style.width = '100%';
-    iconContainer.style.height = '100%';
-    iconContainer.style.position = 'relative';
-    iconContainer.style.pointerEvents = 'none';
-    
-    // Create animated AI icon
-    createAnimatedAIIcon(iconContainer);
-    avatar.appendChild(iconContainer);
-    
-    const messageContent = document.createElement('div');
-    messageContent.className = 'message-content';
-    
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    
-    const loadingContainer = document.createElement('div');
-    loadingContainer.className = 'custom-loading';
-    
-    // Create animated loading elements
-    createCustomLoadingAnimation(loadingContainer);
-    
-    bubble.appendChild(loadingContainer);
-    messageContent.appendChild(bubble);
-    messageDiv.appendChild(avatar);
-    messageDiv.appendChild(messageContent);
-    
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    
-    // Animation is automatically started in createAnimatedAIIcon
-    
-    return loadingId;
-}
-
-// Remove loading indicator
-function removeLoadingMessage(loadingId) {
-    const loadingElement = document.getElementById(loadingId);
-    if (loadingElement) {
-        loadingElement.remove();
-    }
-}
-
-// Update stats
 function updateStats() {
-    messageCountElement.textContent = messageCount;
-    contextSizeElement.textContent = conversationHistory.length;
+    // Header stats
+    if (elements.messageCount) {
+        elements.messageCount.textContent = state.messageCount;
+    }
     
-    if (messageCount > 0) {
-        const avgTime = (totalResponseTime / messageCount / 1000).toFixed(2);
-        avgResponseElement.textContent = `${avgTime}s`;
+    if (elements.avgResponse && state.messageCount > 0) {
+        const avg = (state.totalResponseTime / state.messageCount / 1000).toFixed(2);
+        elements.avgResponse.textContent = `${avg}s`;
+    }
+    
+    // Panel stats
+    if (elements.statMessages) {
+        elements.statMessages.textContent = state.messageCount;
+    }
+    
+    if (elements.statAvgTime && state.messageCount > 0) {
+        const avg = (state.totalResponseTime / state.messageCount / 1000).toFixed(2);
+        elements.statAvgTime.textContent = `${avg}s`;
+    }
+    
+    if (elements.statContext) {
+        elements.statContext.textContent = state.conversationHistory.length;
     }
 }
 
-// Upload document
+// ═══════════════════════════════════════════════════════════════════════════
+// DOCUMENT UPLOAD
+// ═══════════════════════════════════════════════════════════════════════════
+
 async function uploadDocument() {
-    const text = documentInput.value.trim();
+    const text = elements.documentInput?.value.trim();
     
     if (!text) {
         showUploadStatus('Please enter some text to upload', 'error');
         return;
     }
     
-    // Disable button while uploading
-    uploadButton.disabled = true;
-    uploadButton.textContent = 'Uploading...';
+    elements.uploadButton.disabled = true;
+    elements.uploadButton.innerHTML = '<span>Uploading...</span>';
     
     try {
         const response = await fetch(`${API_BASE_URL}/upload`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                documents: [
-                    {
-                        id: `doc-${Date.now()}`,
-                        text: text,
-                        metadata: {
-                            uploadedAt: new Date().toISOString(),
-                            source: 'web-interface'
-                        }
+                documents: [{
+                    id: `doc-${Date.now()}`,
+                    text: text,
+                    metadata: {
+                        uploadedAt: new Date().toISOString(),
+                        source: 'web-interface'
                     }
-                ],
-                namespace: 'ucl-courses' // Upload to course data namespace
-            }),
+                }],
+                namespace: 'ucl-courses'
+            })
         });
         
         const data = await response.json();
         
         if (response.ok) {
-            showUploadStatus(`✅ Successfully uploaded document!`, 'success');
-            documentInput.value = '';
-            
-            // Clear success message after 3 seconds
-            setTimeout(() => {
-                uploadStatus.textContent = '';
-                uploadStatus.className = 'upload-status';
-            }, 3000);
+            showUploadStatus('✅ Successfully uploaded document!', 'success');
+            elements.documentInput.value = '';
+            setTimeout(() => hideUploadStatus(), 3000);
         } else {
             showUploadStatus(`❌ Error: ${data.error || 'Upload failed'}`, 'error');
         }
         
     } catch (error) {
-        console.error('Error uploading document:', error);
+        console.error('Upload error:', error);
         showUploadStatus('❌ Failed to upload. Check server connection.', 'error');
     } finally {
-        uploadButton.disabled = false;
-        uploadButton.textContent = 'Upload Document';
+        elements.uploadButton.disabled = false;
+        elements.uploadButton.innerHTML = `
+            <span>Upload to Knowledge Base</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+        `;
     }
 }
 
-// Show upload status message
 function showUploadStatus(message, type) {
-    uploadStatus.textContent = message;
-    uploadStatus.className = `upload-status ${type}`;
-}
-
-// Theme Management
-function initializeTheme() {
-    // Check localStorage for saved theme preference
-    const savedTheme = localStorage.getItem('theme');
-    
-    if (savedTheme === 'light') {
-        document.body.classList.add('light-mode');
-    } else if (!savedTheme) {
-        // Default to dark mode if no preference is saved
-        localStorage.setItem('theme', 'dark');
+    if (elements.uploadStatus) {
+        elements.uploadStatus.textContent = message;
+        elements.uploadStatus.className = `upload-status ${type}`;
     }
 }
 
-function toggleTheme() {
-    const isLightMode = document.body.classList.toggle('light-mode');
-    
-    // Save preference to localStorage
-    localStorage.setItem('theme', isLightMode ? 'light' : 'dark');
-    
-    // Add a subtle animation effect
-    themeToggle.style.transform = 'scale(0.9)';
-    setTimeout(() => {
-        themeToggle.style.transform = '';
-    }, 100);
+function hideUploadStatus() {
+    if (elements.uploadStatus) {
+        elements.uploadStatus.textContent = '';
+        elements.uploadStatus.className = 'upload-status';
+    }
 }
 
-// Clear chat functionality
+// ═══════════════════════════════════════════════════════════════════════════
+// CLEAR CHAT
+// ═══════════════════════════════════════════════════════════════════════════
+
 function clearChat() {
-    // Remove all messages except welcome message
-    const messages = chatMessages.querySelectorAll('.message');
-    messages.forEach(message => message.remove());
+    // Clear messages except welcome
+    const messages = elements.chatMessages.querySelectorAll('.message');
+    messages.forEach(msg => msg.remove());
     
-    // Re-add welcome message
-    const welcomeHTML = `
-        <div class="welcome-message">
-            <div class="welcome-icon">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </div>
-            <h2>Welcome to Nexus</h2>
-            <p>Your intelligent course assistant powered by advanced AI and semantic search.</p>
-            <p>Ask me about courses, modules, assessments, or any academic information.</p>
-        </div>
-    `;
-    chatMessages.innerHTML = welcomeHTML;
+    // Show welcome experience
+    if (elements.welcomeExperience) {
+        elements.welcomeExperience.style.display = '';
+        elements.welcomeExperience.style.opacity = '1';
+        elements.welcomeExperience.style.transform = 'scale(1)';
+    }
     
-    // Reset stats and conversation history
-    messageCount = 0;
-    totalResponseTime = 0;
-    conversationHistory = []; // Clear conversation history
+    // Reset state
+    state.messageCount = 0;
+    state.totalResponseTime = 0;
+    state.conversationHistory = [];
     updateStats();
     
-    // Show confirmation
-    const originalText = clearChatButton.textContent;
-    clearChatButton.textContent = '✓ Cleared!';
-    clearChatButton.style.background = 'rgba(16, 185, 129, 0.2)';
-    clearChatButton.style.borderColor = '#10b981';
-    clearChatButton.style.color = '#10b981';
+    // Button feedback
+    const btn = elements.clearChatButton;
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '✓ Cleared!';
+    btn.style.background = 'rgba(16, 185, 129, 0.2)';
+    btn.style.borderColor = '#10b981';
+    btn.style.color = '#10b981';
     
     setTimeout(() => {
-        clearChatButton.textContent = originalText;
-        clearChatButton.style.background = '';
-        clearChatButton.style.borderColor = '';
-        clearChatButton.style.color = '';
+        btn.innerHTML = originalHTML;
+        btn.style.background = '';
+        btn.style.borderColor = '';
+        btn.style.color = '';
     }, 2000);
 }
 
-// Periodically check server status
-setInterval(checkServerStatus, 30000); // Check every 30 seconds
+// ═══════════════════════════════════════════════════════════════════════════
+// ANIMATIONS (using Anime.js if available)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function animateElement(element, properties) {
+    if (typeof anime !== 'undefined') {
+        anime({
+            targets: element,
+            ...properties,
+            easing: 'easeOutExpo'
+        });
+    }
+}

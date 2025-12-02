@@ -5,10 +5,12 @@ A beautiful, modern RAG (Retrieval-Augmented Generation) chatbot powered by Pine
 ## 🌟 Features
 
 - **Retrieval-Augmented Generation**: Combines vector search with LLM generation for accurate, context-aware responses
+- **🧠 Intelligent Suggestions**: Automatically detects ambiguous queries and presents clear options based on embeddings similarity
 - **Pinecone Integration**: Uses Pinecone vector database for efficient semantic search
 - **Document Upload**: Add documents to your knowledge base through the UI
 - **Source Citations**: Shows relevant sources with similarity scores for each response
-- **Modern UI**: Beautiful, responsive interface with dark mode design
+- **Conversational Context**: Maintains conversation history for contextual, multi-turn dialogues
+- **Modern UI**: Beautiful, responsive interface with dark/light mode toggle
 - **Real-time Stats**: Track message count and average response time
 - **RESTful API**: Easy-to-use API endpoints for chat and document management
 - **⚡ Performance Optimizations**: 
@@ -16,7 +18,7 @@ A beautiful, modern RAG (Retrieval-Augmented Generation) chatbot powered by Pine
   - **Namespace Partitioning**: 2-10x faster with organized data
   - **Metadata Filtering**: 2-5x faster with intelligent filtering
   - **Similarity Thresholding**: Higher quality, faster results
-  - **Optimized Retrieval**: Reduced topK for better performance
+  - **Optimized Retrieval**: Smart top-K selection based on query type
 
 ## 📋 Prerequisites
 
@@ -171,6 +173,55 @@ Once uploaded, you can ask:
 - "Tell me about the assessment for Psychology of Sport and Exercise"
 - "When does the academic year start?"
 - "What assessments are due in Week 10?"
+
+### 🧠 Intelligent Suggestions with Interactive Tiles
+
+The chatbot automatically detects when your query matches multiple similar items and presents **clickable suggestion tiles** - beautiful, interactive UI elements that students can click to instantly select their choice:
+
+**Example:**
+
+```
+Student: "What's the deadline for Academic Research?"
+
+Oracle: I found 2 modules matching 'Academic Research':
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ 💡 Choose an option:                            ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ → Academic Research and Study Skills   [CLICK] ┃
+┃   📅 Year 1  📆 Semester 1  🔖 W_HTH4C042R...  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ → Advanced Academic Research           [CLICK] ┃
+┃   📅 Year 2  📆 Semester 2  🔖 W_HTH5C043R...  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
+
+**Key Benefits:**
+- ✅ **Interactive tiles** - Click to select, no typing needed
+- ✅ **Beautiful design** - Glass-morphism with smooth animations
+- ✅ **Rich information** - Icons and metadata for easy differentiation
+- ✅ **Smart detection** - Uses embeddings similarity scores to identify ambiguity
+- ✅ **Keyboard accessible** - Full keyboard navigation support
+- ✅ **Mobile optimized** - Touch-friendly responsive design
+
+📖 **See [INTERACTIVE-SUGGESTION-TILES.md](INTERACTIVE-SUGGESTION-TILES.md) for the UI guide**  
+📖 **See [INTELLIGENT-SUGGESTIONS.md](INTELLIGENT-SUGGESTIONS.md) for technical details**
+
+### Testing Intelligent Suggestions
+
+Run automated tests to see the feature in action:
+
+```bash
+# Automated test with predefined queries
+node test-intelligent-suggestions.js
+
+# Interactive mode - try your own queries
+node test-intelligent-suggestions.js --interactive
+```
 
 ### Data Structure
 
