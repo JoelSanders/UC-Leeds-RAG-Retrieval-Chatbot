@@ -50,7 +50,7 @@ let geminiModel;
 try {
   genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   // Use the available Gemini 2.5 Flash model
-  geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite-preview-09-2025" });
+  geminiModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-05-20" });
   console.log('✅ Gemini initialized (for chat)');
 } catch (error) {
   console.error('❌ Gemini initialization error:', error.message);
