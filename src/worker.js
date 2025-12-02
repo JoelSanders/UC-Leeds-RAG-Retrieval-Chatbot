@@ -1,8 +1,13 @@
 /**
  * UC Oracle Chatbot - Cloudflare Worker
  * 
- * Simplified worker that handles API routes and serves static files.
+ * Handles API routes and serves static files from the public folder.
  */
+
+import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
+import manifestJSON from '__STATIC_CONTENT_MANIFEST';
+
+const assetManifest = JSON.parse(manifestJSON);
 
 // In-memory cache
 const queryCache = new Map();
@@ -84,7 +89,6 @@ ${context}`;
 
   const contents = [];
   
-  // Add system prompt as first user message
   contents.push({
     role: 'user',
     parts: [{ text: systemPrompt }]
@@ -95,7 +99,6 @@ ${context}`;
     parts: [{ text: 'I understand. I am Oracle, the UC Leeds assistant. I will only use the provided context to answer questions.' }]
   });
 
-  // Add conversation history
   if (conversationHistory && conversationHistory.length > 0) {
     conversationHistory.slice(-6).forEach(msg => {
       contents.push({
@@ -105,7 +108,6 @@ ${context}`;
     });
   }
 
-  // Add current query
   contents.push({
     role: 'user',
     parts: [{ text: query }],
@@ -142,22 +144,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// Handle OPTIONS (CORS preflight)
 function handleOptions() {
-  return new Response(null, {
-    status: 204,
-    headers: corsHeaders,
-  });
+  return new Response(null, { status: 204, headers: corsHeaders });
 }
 
-// JSON response helper
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      'Content-Type': 'application/json',
-      ...corsHeaders,
-    },
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
 }
 
@@ -173,7 +167,8 @@ export default {
     }
 
     try {
-      // API Routes
+      // ============ API Routes ============
+      
       if (path === '/api/health') {
         return jsonResponse({
           status: 'ok',
@@ -192,49 +187,33 @@ export default {
           return jsonResponse({ error: 'Message is required' }, 400);
         }
 
-        // Check required env vars
         if (!env.OPENAI_API_KEY || !env.PINECONE_API_KEY || !env.PINECONE_HOST || !env.GEMINI_API_KEY) {
           return jsonResponse({ 
             error: 'Server configuration error', 
-            details: 'Missing required API keys. Please set OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_HOST, and GEMINI_API_KEY secrets.' 
+            details: 'Missing required API keys.' 
           }, 500);
         }
 
-        // Check cache
         const cacheKey = `${namespace}:${message.trim().toLowerCase()}`;
         if (useCache && queryCache.has(cacheKey)) {
           const cached = queryCache.get(cacheKey);
           if (Date.now() - cached.timestamp < CACHE_TTL) {
-            return jsonResponse({
-              ...cached.data,
-              cached: true,
-              responseTime: Date.now() - startTime,
-            });
+            return jsonResponse({ ...cached.data, cached: true, responseTime: Date.now() - startTime });
           }
           queryCache.delete(cacheKey);
         }
 
-        // Generate embedding
         const embedding = await generateEmbedding(message, env);
+        const matches = await queryPinecone(embedding, { topK: 15, namespace, minScore: 0.3 }, env);
 
-        // Query Pinecone
-        const matches = await queryPinecone(embedding, {
-          topK: 15,
-          namespace,
-          minScore: 0.3,
-        }, env);
-
-        // Build context
         const context = matches.length > 0
           ? `<CONTEXT>\n${matches.map((m, i) => 
               `[Match ${i + 1}] (Score: ${(m.score * 100).toFixed(1)}%)\n${m.metadata?.text || ''}`
             ).join('\n\n---\n\n')}\n</CONTEXT>`
-          : '<CONTEXT>No relevant information found in the knowledge base.</CONTEXT>';
+          : '<CONTEXT>No relevant information found.</CONTEXT>';
 
-        // Generate response
         const aiResponse = await generateChatResponse(message, context, conversationHistory, env);
 
-        // Format sources
         const sources = matches.slice(0, 5).map((match, idx) => ({
           id: idx + 1,
           score: match.score,
@@ -256,7 +235,6 @@ export default {
           cached: false,
         };
 
-        // Cache result
         if (useCache && queryCache.size < CACHE_MAX_SIZE) {
           queryCache.set(cacheKey, { data: result, timestamp: Date.now() });
         }
@@ -265,11 +243,7 @@ export default {
       }
 
       if (path === '/api/cache/stats') {
-        return jsonResponse({
-          size: queryCache.size,
-          maxSize: CACHE_MAX_SIZE,
-          ttl: CACHE_TTL,
-        });
+        return jsonResponse({ size: queryCache.size, maxSize: CACHE_MAX_SIZE, ttl: CACHE_TTL });
       }
 
       if (path === '/api/cache/clear' && request.method === 'POST') {
@@ -278,61 +252,45 @@ export default {
         return jsonResponse({ message: 'Cache cleared', entriesCleared: previousSize });
       }
 
-      // Serve static files from __STATIC_CONTENT
-      if (env.__STATIC_CONTENT) {
-        // Determine the file to serve
-        let filePath = path === '/' ? 'index.html' : path.slice(1);
-        
-        try {
-          const asset = await env.__STATIC_CONTENT.get(filePath);
-          if (asset) {
-            // Determine content type
-            const ext = filePath.split('.').pop();
-            const contentTypes = {
-              'html': 'text/html',
-              'css': 'text/css',
-              'js': 'application/javascript',
-              'json': 'application/json',
-              'png': 'image/png',
-              'jpg': 'image/jpeg',
-              'jpeg': 'image/jpeg',
-              'svg': 'image/svg+xml',
-              'ico': 'image/x-icon',
-            };
-            
-            return new Response(asset, {
-              headers: {
-                'Content-Type': contentTypes[ext] || 'text/plain',
-                'Cache-Control': 'public, max-age=3600',
-              },
-            });
+      // ============ Static Assets ============
+      
+      try {
+        return await getAssetFromKV(
+          { request, waitUntil: ctx.waitUntil.bind(ctx) },
+          {
+            ASSET_NAMESPACE: env.__STATIC_CONTENT,
+            ASSET_MANIFEST: assetManifest,
+            mapRequestToAsset: (req) => {
+              const url = new URL(req.url);
+              // Serve index.html for root path
+              if (url.pathname === '/' || url.pathname === '') {
+                url.pathname = '/index.html';
+              }
+              return new Request(url.toString(), req);
+            },
           }
-        } catch (e) {
-          // File not found, fall through to 404
-        }
-        
-        // Try index.html for SPA routing
+        );
+      } catch (e) {
+        // If asset not found, try serving index.html (SPA fallback)
         try {
-          const indexHtml = await env.__STATIC_CONTENT.get('index.html');
-          if (indexHtml) {
-            return new Response(indexHtml, {
-              headers: { 'Content-Type': 'text/html' },
-            });
-          }
-        } catch (e) {
-          // index.html not found
+          const notFoundRequest = new Request(new URL('/index.html', request.url).toString(), request);
+          return await getAssetFromKV(
+            { request: notFoundRequest, waitUntil: ctx.waitUntil.bind(ctx) },
+            {
+              ASSET_NAMESPACE: env.__STATIC_CONTENT,
+              ASSET_MANIFEST: assetManifest,
+            }
+          );
+        } catch (e2) {
+          return jsonResponse({ error: 'Not found', path, details: e.message }, 404);
         }
       }
-
-      // 404 for unmatched routes
-      return jsonResponse({ error: 'Not found', path }, 404);
 
     } catch (error) {
       console.error('Worker error:', error);
       return jsonResponse({
         error: 'Internal server error',
         message: error.message,
-        stack: error.stack,
       }, 500);
     }
   },
