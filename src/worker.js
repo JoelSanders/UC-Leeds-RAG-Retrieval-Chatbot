@@ -69,11 +69,58 @@ async function queryPinecone(embedding, options, env) {
   return (data.matches || []).filter(match => match.score >= minScore);
 }
 
+// Helper: Calculate academic week and dates
+function getAcademicCalendarInfo() {
+  const now = new Date();
+  // UC Leeds 2024/25 academic year - Week 1 starts Monday 9th September 2024
+  const academicYearStart = new Date('2024-09-09T00:00:00Z');
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  
+  const weeksSinceStart = Math.floor((now - academicYearStart) / msPerWeek) + 1;
+  const currentWeek = Math.max(1, Math.min(52, weeksSinceStart));
+  
+  // Calculate a target week date
+  function getWeekDate(weekNum) {
+    const targetDate = new Date(academicYearStart.getTime() + (weekNum - 1) * msPerWeek);
+    return targetDate.toLocaleDateString('en-GB', { 
+      weekday: 'long', 
+      day: 'numeric', 
+      month: 'long', 
+      year: 'numeric' 
+    });
+  }
+  
+  return {
+    currentDate: now.toLocaleDateString('en-GB', { 
+      weekday: 'long', 
+      day: 'numeric', 
+      month: 'long', 
+      year: 'numeric' 
+    }),
+    currentWeek,
+    getWeekDate
+  };
+}
+
 // Helper: Generate chat response using Gemini
 async function generateChatResponse(query, context, conversationHistory, env) {
+  const calendar = getAcademicCalendarInfo();
+  
   const systemPrompt = `You are Oracle, a specialized AI assistant for University Centre Leeds. Your primary role is to answer student questions by strictly using the information provided in the <CONTEXT> section.
 
 You must NOT use any external knowledge or make up information. Your purpose is to accurately present and guide students through the provided data.
+
+### CURRENT DATE & ACADEMIC CALENDAR
+- Today's Date: ${calendar.currentDate}
+- Current Academic Week: Week ${calendar.currentWeek}
+- Academic Year: 2024/25 (Week 1 started Monday 9th September 2024)
+
+When a deadline says "Week X", you CAN calculate the actual date:
+- Week 29 = Monday ${calendar.getWeekDate(29)} (week commencing)
+- Week 30 = Monday ${calendar.getWeekDate(30)} (week commencing)
+- Week 20 = Monday ${calendar.getWeekDate(20)} (week commencing)
+
+If a student asks about a deadline in "Week X", tell them both the week number AND the calculated date.
 
 ### DATA HIERARCHY
 The data follows a strict hierarchy: COURSE → MODULE → ASSESSMENT
