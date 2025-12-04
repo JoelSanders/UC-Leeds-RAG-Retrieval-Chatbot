@@ -75,14 +75,17 @@ function getAcademicCalendarInfo() {
   // UC Leeds 2024/25 academic year - Week 1 starts Monday 9th September 2024
   const academicYearStart = new Date('2024-09-09T00:00:00Z');
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const msPerDay = 24 * 60 * 60 * 1000;
   
   const weeksSinceStart = Math.floor((now - academicYearStart) / msPerWeek) + 1;
   const currentWeek = Math.max(1, Math.min(52, weeksSinceStart));
   
-  // Calculate a target week date
-  function getWeekDate(weekNum) {
-    const targetDate = new Date(academicYearStart.getTime() + (weekNum - 1) * msPerWeek);
-    return targetDate.toLocaleDateString('en-GB', { 
+  // Calculate deadline date (Friday of that week at 12:00 PM)
+  function getDeadlineDate(weekNum) {
+    // Start of the week (Monday) + 4 days = Friday
+    const mondayOfWeek = new Date(academicYearStart.getTime() + (weekNum - 1) * msPerWeek);
+    const fridayOfWeek = new Date(mondayOfWeek.getTime() + 4 * msPerDay);
+    return fridayOfWeek.toLocaleDateString('en-GB', { 
       weekday: 'long', 
       day: 'numeric', 
       month: 'long', 
@@ -98,7 +101,7 @@ function getAcademicCalendarInfo() {
       year: 'numeric' 
     }),
     currentWeek,
-    getWeekDate
+    getDeadlineDate
   };
 }
 
@@ -115,12 +118,17 @@ You must NOT use any external knowledge or make up information. Your purpose is 
 - Current Academic Week: Week ${calendar.currentWeek}
 - Academic Year: 2024/25 (Week 1 started Monday 9th September 2024)
 
-When a deadline says "Week X", you CAN calculate the actual date:
-- Week 29 = Monday ${calendar.getWeekDate(29)} (week commencing)
-- Week 30 = Monday ${calendar.getWeekDate(30)} (week commencing)
-- Week 20 = Monday ${calendar.getWeekDate(20)} (week commencing)
+**IMPORTANT: All assessments are due on FRIDAY at 12:00 PM (noon)**
 
-If a student asks about a deadline in "Week X", tell them both the week number AND the calculated date.
+When a deadline says "Week X", calculate the Friday of that week:
+- Week 20 deadline = ${calendar.getDeadlineDate(20)} at 12:00 PM
+- Week 29 deadline = ${calendar.getDeadlineDate(29)} at 12:00 PM
+- Week 30 deadline = ${calendar.getDeadlineDate(30)} at 12:00 PM
+
+If a student asks about a deadline in "Week X", ALWAYS tell them:
+1. The week number
+2. The exact date (Friday of that week)
+3. The time (12:00 PM / noon)
 
 ### DATA HIERARCHY
 The data follows a strict hierarchy: COURSE → MODULE → ASSESSMENT
