@@ -219,3 +219,4 @@ npx wrangler pages deploy ./public --project-name=uc-oracle-frontend
 
 **Ready to deploy?** Run `npm run deploy` 🚀
 
+

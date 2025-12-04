@@ -401,10 +401,39 @@ export default {
         // Reduced topK for faster queries (was 15)
         const matches = await queryPinecone(embedding, { topK: 8, namespace, minScore: 0.35 }, env);
 
+        // Build rich context with ALL metadata fields
         const context = matches.length > 0
-          ? `<CONTEXT>\n${matches.map((m, i) => 
-              `[Match ${i + 1}] (Score: ${(m.score * 100).toFixed(1)}%)\n${m.metadata?.text || ''}`
-            ).join('\n\n---\n\n')}\n</CONTEXT>`
+          ? `<CONTEXT>\n${matches.map((m, i) => {
+              const meta = m.metadata || {};
+              let contextEntry = `[Match ${i + 1}] (Score: ${(m.score * 100).toFixed(1)}%)\n`;
+              contextEntry += `Type: ${meta.type || 'unknown'}\n`;
+              
+              if (meta.type === 'assessment') {
+                contextEntry += `Module: ${meta.module_title || 'Unknown'}\n`;
+                contextEntry += `Assessment Type: ${meta.assessment_type || 'Not specified'}\n`;
+                contextEntry += `Deadline: ${meta.deadline || 'Not specified'}\n`;
+                contextEntry += `Weight: ${meta.weight || 'Not specified'}\n`;
+                contextEntry += `Word Count: ${meta.word_count || 'Not specified'}\n`;
+                contextEntry += `Tutor: ${meta.tutor || 'Not specified'}\n`;
+                contextEntry += `Year: ${meta.year || 'Not specified'}\n`;
+                contextEntry += `Semester: ${meta.semester || 'Not specified'}\n`;
+                if (meta.submission_method) contextEntry += `Submission: ${meta.submission_method}\n`;
+                if (meta.learning_outcomes) contextEntry += `Learning Outcomes: ${meta.learning_outcomes}\n`;
+              } else if (meta.type === 'module') {
+                contextEntry += `Module Title: ${meta.module_title || 'Unknown'}\n`;
+                contextEntry += `Module Code: ${meta.module_code || 'Not specified'}\n`;
+                contextEntry += `Year: ${meta.year || 'Not specified'}\n`;
+                contextEntry += `Semester: ${meta.semester || 'Not specified'}\n`;
+                contextEntry += `Tutor: ${meta.tutor || 'Not specified'}\n`;
+                contextEntry += `Credits: ${meta.credits || 'Not specified'}\n`;
+              } else if (meta.type === 'course_overview') {
+                contextEntry += `Course: ${meta.course_title || 'Unknown'}\n`;
+                contextEntry += `Course Code: ${meta.course_code || 'Not specified'}\n`;
+              }
+              
+              contextEntry += `\nContent:\n${meta.text || 'No additional content'}`;
+              return contextEntry;
+            }).join('\n\n---\n\n')}\n</CONTEXT>`
           : '<CONTEXT>No relevant information found.</CONTEXT>';
 
         const aiResponse = await generateChatResponse(message, context, conversationHistory, env);
